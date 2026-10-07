@@ -1,0 +1,10 @@
+{
+  "name": "gt-web-cg",
+  "version": "1.0.0",
+  "description": "Веб-титрование без vMix: импорт титров vMix GT (.gtzip), пульт и графика для vMix Web Browser",
+  "main": "server.js",
+  "scripts": { "start": "node server.js", "test": "node tests/parse.test.js" },
+  "engines": { "node": ">=18" },
+  "license": "UNLICENSED",
+  "private": true
+}
