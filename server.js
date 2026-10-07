@@ -34,7 +34,7 @@ try { pkgBody = fs.readFileSync(PKG_FILE); } catch (e) { /* нет пакета 
 const clients = new Set();
 
 function broadcast() {
-  const msg = 'data: ' + JSON.stringify(state) + '\n\n';
+  const msg = 'data: ' + JSON.stringify(Object.assign({}, state, { now: Date.now() })) + '\n\n';
   for (const res of clients) { try { res.write(msg); } catch (e) { clients.delete(res); } }
 }
 let saveTimer = null;
@@ -61,7 +61,7 @@ const server = http.createServer(async (req, res) => {
 
   if (p === '/api/state' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': MIME['.json'], 'Cache-Control': 'no-store' });
-    return res.end(JSON.stringify(state));
+    return res.end(JSON.stringify(Object.assign({}, state, { now: Date.now() })));
   }
   if (p === '/api/state' && req.method === 'POST') {
     try {
@@ -75,7 +75,7 @@ const server = http.createServer(async (req, res) => {
   if (p === '/api/events') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
     res.write('retry: 1000\n');
-    res.write('data: ' + JSON.stringify(state) + '\n\n');
+    res.write('data: ' + JSON.stringify(Object.assign({}, state, { now: Date.now() })) + '\n\n');
     clients.add(res);
     const ping = setInterval(() => { try { res.write(': ping\n\n'); } catch (e) {} }, 15000);
     req.on('close', () => { clearInterval(ping); clients.delete(res); });

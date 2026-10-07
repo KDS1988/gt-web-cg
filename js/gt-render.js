@@ -14,6 +14,8 @@
 (function (root) {
   'use strict';
 
+  function gtNow() { return root.CG && root.CG.clock ? root.CG.clock.now() : Date.now(); }
+
   /* ------------------------------------------------------------------ */
   /* Интерполяция                                                         */
   /* ------------------------------------------------------------------ */
@@ -178,17 +180,23 @@
 
   Title.prototype._build = function () {
     var self = this, def = this.def;
+    var animated = {};
+    var sbs = def.sb || {};
+    [sbs.in, sbs.out, sbs.cont].concat((sbs.dc || []).map(function (d) { return d.a; })).forEach(function (l) {
+      (l || []).forEach(function (a) { if (a.t !== 'Hidden') animated[a.o] = 1; });
+    });
+    def.objects.forEach(function (o) { if (o.mask && animated[o.mask]) animated[o.n] = 1; if (o.lay && animated[o.lay]) animated[o.n] = 1; });
     var layers = {};
     def.objects.forEach(function (o) { if (o.t === 'layer') layers[o.n] = o; });
     this.layers = layers;
     def.objects.forEach(function (o) {
       if (o.t === 'layer') return;
       var rec = { o: o, g: { x: o.x, y: o.y, w: o.w, h: o.h }, fill: o.fill || null, vis: true, text: '', src: o.img || '', st: {}, css: {} };
-      var e = document.createElement('div'); e.className = 'gt-o gt-' + o.t;
+      var e = document.createElement('div'); e.className = 'gt-o gt-' + o.t; e.setAttribute('data-n', o.n);
       var c = document.createElement('div'); c.className = 'gt-c';
       var k = document.createElement(o.t === 'image' ? 'img' : 'div'); k.className = 'gt-k';
-      e.style.cssText = 'position:absolute;transform-origin:0 0;will-change:transform,opacity';
-      c.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%';
+      e.style.cssText = 'position:absolute;transform-origin:0 0' + (animated[o.n] ? ';will-change:transform,opacity' : ''); // слой только тем, кто двигается
+      c.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%' + (o.fx && (o.fx.sh || o.fx.blur) && animated[o.n] ? ';will-change:transform' : ''); // тень растрируется один раз
       k.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;box-sizing:border-box';
       if (o.t === 'ellipse') k.style.borderRadius = '50%';
       if (o.t === 'image') { k.alt = ''; k.draggable = false; k.style.objectFit = { fill: 'fill', uniform: 'contain', uniformtofill: 'cover', none: 'none' }[o.fit] || 'contain'; }
@@ -205,7 +213,7 @@
           'text-align:' + T.al + ';text-transform:' + (T.up ? 'uppercase' : T.lo ? 'lowercase' : 'none') + ';' +
           'white-space:' + (T.wrap && T.auto !== 'wh' && T.auto !== 'w' ? 'pre-wrap' : 'pre') + ';' +
           (T.cs ? 'letter-spacing:' + (T.cs / 1000) + 'em;' : '');
-        if (T.wrap && T.auto !== 'wh' && T.auto !== 'w') sp.style.width = '100%';
+        if (T.wrap && T.auto !== 'wh' && T.auto !== 'w') sp.style.width = '103%'; // допуск 3%: рамки в GT подогнаны под текст впритык, сглаживание Windows/Mac отличается
         if (o.stroke) { sp.style.webkitTextStroke = o.stroke.w + 'px ' + (o.stroke.b.c || '#000'); sp.style.paintOrder = 'stroke fill'; }
         k.appendChild(sp);
         rec.sp = sp;
@@ -216,17 +224,11 @@
       var filt = [];
       if (o.fx && o.fx.sh) filt.push('drop-shadow(' + o.fx.sh.dx + 'px ' + o.fx.sh.dy + 'px ' + o.fx.sh.b + 'px ' + o.fx.sh.c + ')');
       if (o.fx && o.fx.blur) filt.push('blur(' + o.fx.blur + 'px)');
-      if (filt.length) e.style.filter = filt.join(' ');
+      if (filt.length) k.style.filter = filt.join(' '); // тень «запекается» в растр слоя c, а не считается при каждой композиции
+      rec.pad = o.fx && o.fx.sh ? o.fx.sh.b * 2 + Math.max(Math.abs(o.fx.sh.dx), Math.abs(o.fx.sh.dy)) + 2 : 0;
       c.appendChild(k); e.appendChild(c);
       rec.e = e; rec.c = c; rec.k = k;
-      if (o.mask) {
-        var m = document.createElement('div');
-        m.className = 'gt-m';
-        m.style.cssText = 'position:absolute;left:0;top:0;width:' + self.W + 'px;height:' + self.H + 'px';
-        m.appendChild(e);
-        rec.m = m;
-        self.el.appendChild(m);
-      } else self.el.appendChild(e);
+      self.el.appendChild(e);
       self.objs.push(rec);
       self.byName[o.n] = rec;
     });
@@ -286,7 +288,7 @@
   };
 
   Title.prototype._applyData = function () {
-    var self = this, now = Date.now();
+    var self = this, now = gtNow();
     this.objs.forEach(function (r) {
       var o = r.o, n = o.n;
       var vis = self.data[n + '.Visible'];
@@ -299,7 +301,11 @@
       if (o.t === 'image') {
         var sv = self.data[n + '.Source'];
         var src = self.assetUrl(sv === undefined ? o.img : sv);
-        if (r.src !== src) { r.src = src; if (src) { r.k.src = src; r.k.style.display = ''; } else { r.k.removeAttribute('src'); r.k.style.display = 'none'; } }
+        if (r.src !== src) {
+          r.src = src;
+          if (src) { r.k.src = src; r.k.style.display = ''; if (r.k.decode) (self._imgWait = self._imgWait || []).push(r.k.decode().catch(function () {})); }
+          else { r.k.removeAttribute('src'); r.k.style.display = 'none'; }
+        }
       }
       var cv = self.data[n + '.Fill'];
       if (cv !== undefined && cv !== null && cv !== '') r.fill = { t: 'solid', c: String(cv) };
@@ -310,7 +316,7 @@
   /** Тикающие таймеры: обновить только текст */
   Title.prototype._tickTimers = function () {
     if (!this.hasTimer) return;
-    var self = this, now = Date.now(), relayout = false;
+    var self = this, now = gtNow(), relayout = false;
     this.objs.forEach(function (r) {
       if (r.o.t !== 'text') return;
       var v = self.data[r.o.n + '.Text'];
@@ -328,6 +334,10 @@
       var o = r.o;
       if (o.t !== 'text') return;
       var T = o.text, sp = r.sp, g = r.g;
+      // размеры рамки — ДО замера: иначе перенос считается по нулевой ширине и Shrink сжимает шрифт до нечитаемого
+      if (T.auto === 'shrink' || T.auto === 'none') { r.e.style.width = o.w + 'px'; r.e.style.height = o.h + 'px'; r.gkey = null; }
+      else if (T.auto === 'h') { r.e.style.width = o.w + 'px'; r.gkey = null; }
+      else if (T.auto === 'w') { r.e.style.height = o.h + 'px'; r.gkey = null; }
       if (T.auto === 'wh' || T.auto === 'w' || T.auto === 'h') {
         sp.style.fontSize = T.fs + 'px';
         var w = r.text ? sp.offsetWidth : 0, h = r.text ? sp.offsetHeight : 0;
@@ -344,7 +354,7 @@
         g.x = o.x; g.y = o.y; g.w = o.w; g.h = o.h;
         var fits = function (fs) {
           sp.style.fontSize = fs + 'px';
-          if (T.wrap) return sp.offsetHeight <= o.h + 0.5 && sp.scrollWidth <= o.w + 0.5;
+          if (T.wrap) return sp.offsetHeight <= o.h + 0.5 && sp.scrollWidth <= o.w * 1.03 + 0.5;
           return sp.offsetWidth <= o.w + 0.5 && sp.offsetHeight <= o.h * 1.15 + 0.5;
         };
         if (!fits(T.fs)) {
@@ -386,20 +396,26 @@
 
   /* ---------------- storyboards ---------------- */
   Title.prototype._play = function (list, mode, next) {
-    this.sb = { list: list || [], mode: mode, t0: performance.now(), dur: sbDur(list), next: next || null };
+    this.sb = { list: list || [], mode: mode, t0: null, dur: sbDur(list), next: next || null };
     this.dirty = true;
   };
   Title.prototype.playIn = function () {
     var self = this;
-    this.el.style.visibility = '';
     this.phase = 'in';
     var done = function () {
       self.phase = 'idle';
       var p = self._pendingDC; self._pendingDC = null;
       if (p && p.length) self._dataChange(p);
     };
-    if (this.def.sb && this.def.sb.in) this._play(this.def.sb.in, 'in', done);
-    else this._play([], 'in', done);
+    var go = function () {
+      if (self.phase !== 'in') return;
+      self.el.style.visibility = '';
+      self._play(self.def.sb && self.def.sb.in ? self.def.sb.in : [], 'in', done);
+    };
+    // сначала раскодировать картинки, чтобы первые кадры появления не проскакивали
+    var waits = (this._imgWait || []).filter(Boolean); this._imgWait = [];
+    if (!waits.length) go();
+    else Promise.race([Promise.all(waits), new Promise(function (r) { setTimeout(r, 600); })]).then(go);
   };
   Title.prototype.playOut = function () {
     var self = this;
@@ -496,6 +512,7 @@
     if (this.phase === 'hidden' || this.phase === 'gone') return;
     this._tickTimers();
     var sb = this.sb, self = this;
+    if (sb && sb.t0 == null) sb.t0 = now; // первый кадр storyboard — ровно t=0, без проскока
     var t = sb ? (now - sb.t0) / 1000 : 0;
     var ended = sb && t >= sb.dur;
     var anyAnim = !!sb || !!this.cont; // sb ещё не снят — нужен кадр завершения
@@ -519,54 +536,63 @@
       fadeA = f.from + (f.to - f.from) * fp;
       if (fp >= 1 && f.to === 1) this._fade = null;
     }
-    // 2. применение
+    // 2. применение (маска считается сразу здесь: клип на самом объекте, без полноэкранных слоёв)
     this.objs.forEach(function (r) {
-      var s = r.st, e = r.e;
+      var s = r.st, e = r.e, css = r.css, g = r.g;
       var op = s.vis ? s.a : 0;
       var empty = s.sx === 0 || s.sy === 0 || s.cl[0] + s.cl[2] >= 1 || s.cl[1] + s.cl[3] >= 1;
+      // Обрезка (Reveal) и маска — одним clip-path на внешнем элементе, в его локальных координатах.
+      // Растр содержимого (вместе с тенью) остаётся в своём слое и не перерисовывается каждый кадр.
+      var pad = r.pad || 0;
+      var side = [s.cl[0] ? s.cl[0] * g.h : -pad, s.cl[1] ? s.cl[1] * g.w : -pad, s.cl[2] ? s.cl[2] * g.h : -pad, s.cl[3] ? s.cl[3] * g.w : -pad];
+      var mimg = null, mell = '';
+      if (r.o.mask && op > 0.001 && !empty) {
+        var mr = self.byName[r.o.mask], ms = mr && mr.st;
+        if (!ms) op = 0;
+        else {
+          op *= ms.vis ? ms.a : 0;
+          var vr = self._visRect(mr);
+          if (vr[2] - vr[0] <= 0.01 || vr[3] - vr[1] <= 0.01) op = 0;
+          else {
+            var Ox = g.x + g.w * s.ox, Oy = g.y + g.h * s.oy;
+            var x1 = (vr[0] - s.tx - Ox) / s.sx + Ox - g.x, x2 = (vr[2] - s.tx - Ox) / s.sx + Ox - g.x;
+            var y1 = (vr[1] - s.ty - Oy) / s.sy + Oy - g.y, y2 = (vr[3] - s.ty - Oy) / s.sy + Oy - g.y;
+            if (mr.o.t === 'image' && mr.src) mimg = { src: mr.src, x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+            else if (mr.o.t === 'ellipse') mell = 'ellipse(' + ((x2 - x1) / 2).toFixed(2) + 'px ' + ((y2 - y1) / 2).toFixed(2) + 'px at ' + ((x1 + x2) / 2).toFixed(2) + 'px ' + ((y1 + y2) / 2).toFixed(2) + 'px)';
+            else {
+              side[0] = Math.max(side[0], y1); side[1] = Math.max(side[1], g.w - x2);
+              side[2] = Math.max(side[2], g.h - y2); side[3] = Math.max(side[3], x1);
+            }
+          }
+        }
+      }
+      if (side[0] + side[2] >= g.h || side[1] + side[3] >= g.w) op = 0;
+      var clip = mell || ((side[0] > -pad || side[1] > -pad || side[2] > -pad || side[3] > -pad) ?
+        'inset(' + side[0].toFixed(2) + 'px ' + side[1].toFixed(2) + 'px ' + side[2].toFixed(2) + 'px ' + side[3].toFixed(2) + 'px)' : '');
+      var revealOnC = mell && (s.cl[0] || s.cl[1] || s.cl[2] || s.cl[3]); // эллипс-маска + Reveal: Reveal на внутреннем слое
       var show = op > 0.001 && !empty;
-      var css = r.css;
       var v = show ? '' : 'hidden';
       if (css.v !== v) { css.v = v; e.style.visibility = v; }
       if (!show) return;
       var opS = op >= 0.999 ? '1' : op.toFixed(3);
       if (css.op !== opS) { css.op = opS; e.style.opacity = opS; }
-      var tr = '', g = r.g;
+      var tr = '';
       if (s.tx || s.ty) tr += 'translate(' + s.tx.toFixed(2) + 'px,' + s.ty.toFixed(2) + 'px) ';
       if (r.o.rot) tr += 'rotate(' + r.o.rot + 'deg) ';
       if (s.sx !== 1 || s.sy !== 1) tr += 'scale(' + Math.max(s.sx, 0.0001).toFixed(4) + ',' + Math.max(s.sy, 0.0001).toFixed(4) + ')';
       var org = (s.ox * 100) + '% ' + (s.oy * 100) + '%';
       if (css.tr !== tr) { css.tr = tr; e.style.transform = tr || 'none'; }
       if (css.org !== org) { css.org = org; e.style.transformOrigin = org; }
-      var cp = (s.cl[0] || s.cl[1] || s.cl[2] || s.cl[3]) ? 'inset(' + s.cl.map(function (x) { return (x * 100).toFixed(3) + '%'; }).join(' ') + ')' : '';
+      var cp = revealOnC ? 'inset(' + s.cl.map(function (x) { return (x * 100).toFixed(3) + '%'; }).join(' ') + ')' : '';
       if (css.cp !== cp) { css.cp = cp; r.c.style.clipPath = cp; r.c.style.webkitClipPath = cp; }
-    });
-    // 3. маски
-    this.objs.forEach(function (r) {
-      if (!r.m) return;
-      var mr = self.byName[r.o.mask];
-      var css = r.css, ms = mr.st;
-      var a = ms.vis ? ms.a : 0;
-      var vr = self._visRect(mr);
-      var none = a <= 0.001 || vr[2] - vr[0] <= 0.01 || vr[3] - vr[1] <= 0.01 || ms.sx === 0 || ms.sy === 0;
-      var mv = none ? 'hidden' : '';
-      if (css.mv !== mv) { css.mv = mv; r.m.style.visibility = mv; }
-      if (none) return;
-      var mo = a >= 0.999 ? '1' : a.toFixed(3);
-      if (css.mo !== mo) { css.mo = mo; r.m.style.opacity = mo; }
-      var clip;
-      if (mr.o.t === 'ellipse') {
-        clip = 'ellipse(' + ((vr[2] - vr[0]) / 2).toFixed(2) + 'px ' + ((vr[3] - vr[1]) / 2).toFixed(2) + 'px at ' + ((vr[0] + vr[2]) / 2).toFixed(2) + 'px ' + ((vr[1] + vr[3]) / 2).toFixed(2) + 'px)';
-      } else {
-        clip = 'polygon(' + vr[0].toFixed(2) + 'px ' + vr[1].toFixed(2) + 'px,' + vr[2].toFixed(2) + 'px ' + vr[1].toFixed(2) + 'px,' + vr[2].toFixed(2) + 'px ' + vr[3].toFixed(2) + 'px,' + vr[0].toFixed(2) + 'px ' + vr[3].toFixed(2) + 'px)';
+      if (css.mc !== clip) { css.mc = clip; e.style.clipPath = clip; e.style.webkitClipPath = clip; }
+      var mk = mimg ? mimg.src.length + '|' + mimg.x.toFixed(1) + ',' + mimg.y.toFixed(1) + ',' + mimg.w.toFixed(1) + ',' + mimg.h.toFixed(1) : '';
+      if (css.mk !== mk) {
+        css.mk = mk;
+        var mi = mimg ? 'url("' + mimg.src + '")' : '', mp = mimg ? mimg.x.toFixed(1) + 'px ' + mimg.y.toFixed(1) + 'px' : '', msz = mimg ? mimg.w.toFixed(1) + 'px ' + mimg.h.toFixed(1) + 'px' : '';
+        e.style.webkitMaskImage = mi; e.style.maskImage = mi; e.style.webkitMaskPosition = mp; e.style.maskPosition = mp;
+        e.style.webkitMaskSize = msz; e.style.maskSize = msz; e.style.webkitMaskRepeat = mimg ? 'no-repeat' : ''; e.style.maskRepeat = mimg ? 'no-repeat' : '';
       }
-      if (mr.o.t === 'image' && mr.src) {
-        var mi = 'url("' + mr.src + '")', mp = vr[0].toFixed(1) + 'px ' + vr[1].toFixed(1) + 'px', msz = (vr[2] - vr[0]).toFixed(1) + 'px ' + (vr[3] - vr[1]).toFixed(1) + 'px';
-        var key = mi.length + mp + msz;
-        if (css.mi !== key) { css.mi = key; r.m.style.webkitMaskImage = mi; r.m.style.maskImage = mi; r.m.style.webkitMaskPosition = mp; r.m.style.maskPosition = mp; r.m.style.webkitMaskSize = msz; r.m.style.maskSize = msz; r.m.style.webkitMaskRepeat = 'no-repeat'; r.m.style.maskRepeat = 'no-repeat'; }
-        clip = '';
-      }
-      if (css.mc !== clip) { css.mc = clip; r.m.style.clipPath = clip; r.m.style.webkitClipPath = clip; }
     });
     var fo = fadeA >= 0.999 ? '' : fadeA.toFixed(3);
     if (this._fo !== fo) { this._fo = fo; this.el.style.opacity = fo; }
@@ -591,6 +617,8 @@
     this.dying = [];
     this.setPackage(pkg);
     var self = this;
+    // шрифт догрузился позже — пересчитать размеры текста (Shrink/AutoSize)
+    if (document.fonts && document.fonts.addEventListener) document.fonts.addEventListener('loadingdone', function () { self.relayout(); });
     var loop = function (ts) { self._frame(ts || performance.now()); self._raf = requestAnimationFrame(loop); };
     this._raf = requestAnimationFrame(loop);
     // в фоне (вкладка скрыта) rAF спит — таймеры и анимации досчитываем setInterval-ом
@@ -605,8 +633,17 @@
     this.el.style.width = this.W + 'px'; this.el.style.height = this.H + 'px';
     this.titles = {};
     (this.pkg.titles || []).forEach(function (t) { self.titles[t.id] = t; });
+    // заранее раскодировать все картинки пакета (кэш браузера) — IN не будет ждать
+    this._decoded = Object.keys(this.pkg.assets || {}).map(function (k) {
+      var a = self.pkg.assets[k]; if (!a || !/^data:image/.test(a.data || '')) return null;
+      var im = new Image(); im.src = a.data; return im.decode ? im.decode().catch(function () {}).then(function () { return im; }) : null;
+    });
     this.ready = loadFonts(this.pkg);
     return this.ready;
+  };
+  Stage.prototype.relayout = function () {
+    var self = this;
+    Object.keys(this.ch).forEach(function (k) { var c = self.ch[k]; if (c && c.title) { c.title.objs.forEach(function (r) { r.gkey = null; r.fkey = null; }); c.title.layout(); c.title.dirty = true; } });
   };
   Stage.prototype.clear = function (now) {
     var self = this;
@@ -669,5 +706,5 @@
     });
   };
 
-  root.GTRender = { Stage: Stage, Title: Title, ease: ease, brushCss: brushCss, fmtTimer: fmtTimer, timerMs: timerMs, textOf: textOf, loadFonts: loadFonts };
+  root.GTRender = { now: gtNow, Stage: Stage, Title: Title, ease: ease, brushCss: brushCss, fmtTimer: fmtTimer, timerMs: timerMs, textOf: textOf, loadFonts: loadFonts };
 })(typeof self !== 'undefined' ? self : this);

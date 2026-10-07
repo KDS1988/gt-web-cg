@@ -333,7 +333,7 @@
     if (f.kind === 'text') {
       if (isTimer(v)) {
         var tm = v.tm;
-        body = '<div class="timer' + (tm.run ? ' run' : '') + '"><span class="tv" data-tv>' + esc(GTRender.textOf(v, Date.now())) + '</span>' +
+        body = '<div class="timer' + (tm.run ? ' run' : '') + '"><span class="tv" data-tv>' + esc(GTRender.textOf(v, CG.clock.now())) + '</span>' +
           '<button class="btn" data-act="tgo">' + (tm.run ? '⏸ Стоп' : '▶ Старт') + '</button>' +
           '<input type="text" data-act="tset" placeholder="мм:сс" value="" title="Установить время и нажать Enter">' +
           '<button class="btn sm" data-act="treset" title="Вернуть ' + GTRender.fmtTimer(tm.ms0 || 0, 'mm:ss', -1) + '">↺</button>' +
@@ -410,7 +410,7 @@
       return;
     }
     if (act === 'timer') {
-      if (isTimer(v)) change(t, f, GTRender.textOf(v, Date.now()), true, true);
+      if (isTimer(v)) change(t, f, GTRender.textOf(v, CG.clock.now()), true, true);
       else {
         var ms = parseTime(v); if (ms == null) ms = 0;
         change(t, f, { tm: { ms: ms, ms0: ms, run: false, at: 0, dir: -1, fmt: 'mm:ss' } }, true, true);
@@ -418,7 +418,7 @@
       return;
     }
     if (isTimer(v)) {
-      var tm = Object.assign({}, v.tm), now = Date.now();
+      var tm = Object.assign({}, v.tm), now = CG.clock.now();
       if (act === 'tgo') {
         if (tm.run) { tm.ms = GTRender.timerMs(tm, now); tm.run = false; tm.at = 0; }
         else { tm.run = true; tm.at = now; }
@@ -456,7 +456,7 @@
       var ms = parseTime(e.target.value);
       if (ms == null) { toast('Формат времени: мм:сс', true); return; }
       var tm = Object.assign({}, v.tm, { ms: ms, ms0: ms });
-      if (tm.run) tm.at = Date.now();
+      if (tm.run) tm.at = CG.clock.now();
       change(t, f, { tm: tm }, true, true);
     } else if (act === 'text' && !D.live) { pushLive(affected(t.id, f)); }
   });
@@ -489,7 +489,7 @@
       var tv = $('[data-tv]', box); if (!tv) return;
       var f = t.fields.filter(function (x) { return x.k === box.dataset.k; })[0];
       var v = f && getVal(t.id, f);
-      if (isTimer(v)) tv.textContent = GTRender.textOf(v, Date.now());
+      if (isTimer(v)) tv.textContent = GTRender.textOf(v, CG.clock.now());
     });
   }, 200);
 

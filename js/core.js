@@ -9,6 +9,10 @@
 (function (root) {
   'use strict';
 
+  /* Общие часы: в облаке — время сервера Firebase, локально — время server.js. Таймеры считаются от него,
+     поэтому пульт на Mac и графика на ПК vMix показывают одно и то же даже при расхождении системных часов. */
+  var clock = { offset: 0, now: function () { return Date.now() + clock.offset; } };
+
   var DEFAULT_FB = 'https://kds88-title-default-rtdb.europe-west1.firebasedatabase.app';
 
   function normFbUrl(u) {
@@ -107,6 +111,7 @@
   }
   Bus.prototype._deliver = function (st) {
     if (!st || typeof st !== 'object') return;
+    if (this.mode === 'server' && st.now) clock.offset = st.now - Date.now();
     if (st.rev != null && st.rev === this.lastRev) return;
     this.lastRev = st.rev;
     this.onState(st);
@@ -121,40 +126,59 @@
     es.onerror = function () { self.onStatus('server', false); };
     this.es = es;
   };
+  /* Firebase через WebSocket (SDK): одно соединение на страницу, без лимита браузера в 6 HTTP-потоков на хост.
+     Ключи полей вида «Счет1.Text» Firebase запрещает — кодируем точку и спецсимволы. */
+  function encKey(k) { return String(k).replace(/[%.#$\/\[\]]/g, function (c) { return '%' + c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0'); }); }
+  function decKey(k) { return String(k).replace(/%(25|2E|23|24|2F|5B|5D)/g, function (m, h) { return String.fromCharCode(parseInt(h, 16)); }); }
+  function mapKeys(o, f) { if (!o || typeof o !== 'object') return o; var r = {}; Object.keys(o).forEach(function (k) { r[f(k)] = o[k]; }); return r; }
+  function toObj(x) { // Firebase превращает {"1":…,"2":…} в массив
+    if (!x) return {};
+    if (Array.isArray(x)) { var o = {}; x.forEach(function (v, i) { if (v != null) o[String(i)] = v; }); return o; }
+    return x;
+  }
+  function encodeState(st) {
+    var out = Object.assign({}, st, { ch: {} });
+    Object.keys(st.ch || {}).forEach(function (c) {
+      var a = st.ch[c]; if (!a) return;
+      out.ch['c' + c] = Object.assign({}, a, { data: mapKeys(a.data || {}, encKey) });
+    });
+    return JSON.parse(JSON.stringify(out)); // undefined Firebase не принимает
+  }
+  function decodeState(st) {
+    if (!st) return { ch: {} };
+    var ch = {}, src = toObj(st.ch);
+    Object.keys(src).forEach(function (k) {
+      var a = src[k]; if (!a) return;
+      ch[k.replace(/^c/, '')] = Object.assign({}, a, { data: mapKeys(a.data || {}, decKey) });
+    });
+    return Object.assign({}, st, { ch: ch });
+  }
+  var fbApps = {};
   Bus.prototype._firebase = function (fb, room) {
     var self = this;
     this.mode = 'firebase';
     this.fbBase = fb + '/cg/' + encodeURIComponent(room);
-    this.fbRef = this.fbBase + '/state.json';
-    var es = null, retry = null;
-    var connect = function () {
-      try { if (es) es.close(); } catch (e) {}
-      es = new EventSource(self.fbRef);
-      self.es = es;
-      var onData = function (e) {
-        try {
-          var msg = JSON.parse(e.data);
-          if (!msg) return;
-          if (msg.path === '/') self._deliver(msg.data || { ch: {} });
-          else self._refetch();
-        } catch (er) {}
-      };
-      es.addEventListener('put', onData);
-      es.addEventListener('patch', onData);
-      es.addEventListener('keep-alive', function () { self.onStatus('firebase', true); });
-      es.addEventListener('cancel', function () { self.onStatus('firebase', false, 'доступ запрещён правилами базы'); });
-      es.onopen = function () { self.onStatus('firebase', true); };
-      es.onerror = function () {
-        self.onStatus('firebase', false);
-        if (es.readyState === 2) { clearTimeout(retry); retry = setTimeout(connect, 2000); }
-      };
-    };
-    connect();
-  };
-  Bus.prototype._refetch = function () {
-    var self = this;
-    fetch(this.fbRef, { cache: 'no-store' }).then(function (r) { return r.json(); })
-      .then(function (st) { self._deliver(st || { ch: {} }); }).catch(function () {});
+    if (typeof firebase === 'undefined' || !firebase.initializeApp) {
+      this.onStatus('firebase', false, 'не загружен Firebase SDK (vendor/firebase-*.js)');
+      return;
+    }
+    var app = fbApps[fb] || (fbApps[fb] = firebase.initializeApp({ databaseURL: fb }, 'gtcg-' + Object.keys(fbApps).length));
+    var db = app.database();
+    this.db = db;
+    this.stateRef = db.ref('cg/' + room + '/state');
+    this.pkgRef = db.ref('cg/' + room + '/pkg');
+    db.ref('.info/serverTimeOffset').on('value', function (s) { clock.offset = s.val() || 0; });
+    db.ref('.info/connected').on('value', function (s) {
+      var ok = !!s.val();
+      self.fbConnected = ok;
+      if (ok) self.onStatus('firebase', true);
+      else if (self._everConnected) self.onStatus('firebase', false, 'переподключение…');
+      if (ok) self._everConnected = true;
+    });
+    // если за 8 с так и не подключились — сказать об этом
+    setTimeout(function () { if (!self._everConnected) self.onStatus('firebase', false, 'нет соединения с базой'); }, 8000);
+    this.stateRef.on('value', function (s) { self._deliver(decodeState(s.val())); },
+      function (err) { self.onStatus('firebase', false, 'чтение запрещено правилами базы (' + (err && err.code || err) + ')'); });
   };
   Bus.prototype._bc = function () {
     var self = this;
@@ -175,9 +199,9 @@
   Bus.prototype.send = function (st) {
     var self = this;
     if (this.mode === 'firebase') {
-      return fetch(this.fbRef, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(st) })
-        .then(function (r) { if (!r.ok) self.onStatus('firebase', false, 'запись запрещена (HTTP ' + r.status + ')'); return r.ok; })
-        .catch(function () { self.onStatus('firebase', false); return false; });
+      if (!this.stateRef) return Promise.resolve(false);
+      return this.stateRef.set(encodeState(st)).then(function () { self.onStatus('firebase', true); return true; })
+        .catch(function (e) { self.onStatus('firebase', false, 'запись отклонена: ' + (e && e.message || e)); return false; });
     }
     if (this.mode === 'server') {
       return fetch('api/state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(st) })
@@ -191,8 +215,8 @@
   Bus.prototype.putPkg = function (pkg) {
     var body = JSON.stringify(pkg);
     if (this.mode === 'firebase') {
-      return fetch(this.fbBase + '/pkg.json', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: body })
-        .then(function (r) { if (!r.ok) throw new Error('Firebase: HTTP ' + r.status); return true; });
+      if (!this.pkgRef) return Promise.reject(new Error('нет связи с Firebase'));
+      return this.pkgRef.set(JSON.parse(body)).then(function () { return true; });
     }
     if (this.mode === 'server') {
       return fetch('api/pkg', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: body })
@@ -201,7 +225,7 @@
     return idbSet('active-pkg', pkg);
   };
   Bus.prototype.getPkg = function () {
-    if (this.mode === 'firebase') return fetch(this.fbBase + '/pkg.json', { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; });
+    if (this.mode === 'firebase') return this.pkgRef ? this.pkgRef.once('value').then(function (s) { return s.val(); }) : Promise.resolve(null);
     if (this.mode === 'server') return fetch('api/pkg', { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; });
     return idbGet('active-pkg');
   };
@@ -228,6 +252,6 @@
     DEFAULT_FB: DEFAULT_FB,
     normFbUrl: normFbUrl, normRoom: normRoom, qsParam: qsParam,
     idbGet: idbGet, idbSet: idbSet, idbKeys: idbKeys, Library: Library,
-    Bus: Bus, fetchPkg: fetchPkg
+    Bus: Bus, fetchPkg: fetchPkg, clock: clock, encodeState: encodeState, decodeState: decodeState
   };
 })(typeof self !== 'undefined' ? self : this);
