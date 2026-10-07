@@ -632,7 +632,7 @@
   }, syncStatus, useFirebase() ? { fb: CG.normFbUrl(cfg.fbUrl), room: CG.normRoom(cfg.room) } : null);
 
   bus.whenReady().then(function () {
-    $('#pgmFrame').src = (useFirebase() ? graphicsUrl() + '&' : 'index.html?') + 'checker=1';
+    $('#pgmFrame').src = (useFirebase() ? graphicsUrl() + '&' : 'index.html?') + 'checker=1&_=' + Date.now(); // без старого кэша
     if (pkg) publish(false);
   });
 
