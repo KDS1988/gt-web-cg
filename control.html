@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <title>Пульт · GT Web CG</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="stylesheet" href="fonts/fonts.css?v=20261007d">
-<link rel="stylesheet" href="css/control.css?v=20261007d">
+<link rel="stylesheet" href="fonts/fonts.css?v=20261008a">
+<link rel="stylesheet" href="css/control.css?v=20261008a">
 </head>
 <body>
 <header class="top">
@@ -14,10 +14,12 @@
   <div class="pills">
     <span class="pill" id="pSync" title="Связь с графикой">СВЯЗЬ: …</span>
     <span class="pill" id="pPkg" title="Пакет в комнате графики">ПАКЕТ: …</span>
+    <span class="pill" id="pExt" title="Данные с табло (ScoreOCR)">ТАБЛО: —</span>
   </div>
   <div class="tact">
     <select id="pkgSel" title="Пакет графики"></select>
     <a class="btn" href="import.html" title="Добавить пакет из .gtzip">⤓ Импорт .gtzip</a>
+    <button class="btn" id="btnExt" title="Подключение ScoreOCR и других источников данных табло">📡 Табло</button>
     <button class="btn" id="btnSettings">⚙ Настройки</button>
     <button class="btn danger big" id="btnClear" title="Увести все титры (Esc Esc)">СНЯТЬ ВСЁ</button>
   </div>
@@ -32,7 +34,7 @@
         <div class="mhead"><b class="pvw">PREVIEW</b><span id="pvwName">—</span>
           <button class="btn sm" id="btnReplay" title="Проиграть появление ещё раз">↻</button>
           <button class="btn take" id="btnTake" title="Пробел">IN ▶ В ЭФИР</button></div>
-        <div class="screen"><iframe id="pvwFrame" src="index.html?pvw=1&checker=1&v=20261007d" title="Preview"></iframe></div>
+        <div class="screen"><iframe id="pvwFrame" src="index.html?pvw=1&checker=1&v=20261008a" title="Preview"></iframe></div>
       </div>
       <div class="mon">
         <div class="mhead"><b class="pgm">PROGRAM</b><span id="pgmName">—</span></div>
@@ -78,10 +80,32 @@
   </div>
 </div>
 
-<script src="vendor/firebase-app-compat.js?v=20261007d"></script>
-<script src="vendor/firebase-database-compat.js?v=20261007d"></script>
-<script src="js/core.js?v=20261007d"></script>
-<script src="js/gt-render.js?v=20261007d"></script>
-<script src="js/control.js?v=20261007d"></script>
+<div class="modal" id="extDlg" hidden>
+  <div class="dlg">
+    <h2>📡 Данные с табло</h2>
+    <p class="hint">Приложение ScoreOCR на iPhone (и любая программа, которая умеет слать команды в vMix по HTTP API) обновляет поля титров: счёт, период, игровое время. Голы на табло сразу запускают анимацию «ГОЛ!».</p>
+    <div class="row">
+      <label class="tog"><input type="checkbox" id="xOn"> принимать данные</label>
+      <label class="tog"><input type="checkbox" id="xLive"> сразу в эфир</label>
+      <span class="pill" id="xStatus">нет данных</span>
+    </div>
+    <h3>Как подключить</h3>
+    <div id="xHow" class="hint"></div>
+    <h3>Поля табло → поля титров</h3>
+    <p class="hint">Поля появляются здесь, как только приложение пришлёт первое значение. «Авто» — подбор по имени (HomeScore → Счет1, Clock → Таймер и т.п.).</p>
+    <div class="wrapdata"><table class="data"><thead><tr><th>Поле приложения</th><th>Последнее значение</th><th>Куда</th></tr></thead><tbody id="xMap"></tbody></table></div>
+    <div class="row">
+      <button class="btn" id="xTest" title="Прислать тестовые значения, как от приложения">Проверить: счёт 1:0</button>
+      <button class="btn danger" id="xForget">Забыть поля</button>
+    </div>
+    <div class="row end"><button class="btn take" id="xClose">Готово</button></div>
+  </div>
+</div>
+
+<script src="vendor/firebase-app-compat.js?v=20261008a"></script>
+<script src="vendor/firebase-database-compat.js?v=20261008a"></script>
+<script src="js/core.js?v=20261008a"></script>
+<script src="js/gt-render.js?v=20261008a"></script>
+<script src="js/control.js?v=20261008a"></script>
 </body>
 </html>

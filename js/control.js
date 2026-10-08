@@ -499,6 +499,7 @@
   var lastEsc = 0;
   document.addEventListener('keydown', function (e) {
     if (!$('#settings').hidden) { if (e.key === 'Escape') $('#settings').hidden = true; return; }
+    if (!$('#extDlg').hidden) { if (e.key === 'Escape') $('#extDlg').hidden = true; return; }
     var inField = /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName);
     if (e.key === 'Escape') {
       if (inField) { document.activeElement.blur(); return; }
@@ -619,6 +620,183 @@
   });
 
   /* =================================================================== */
+  /* Данные с табло (ScoreOCR и всё, что умеет слать в HTTP API vMix)    */
+  /* =================================================================== */
+  // Сообщение: { f: Function, i: Input, n: SelectedName, v: Value, t }
+  //   SetText — значение поля; Suspend/Start/Pause/Stop/Change/Set/AdjustCountdown — таймер поля.
+  var extLastAt = 0, extLastMsg = null, extRefreshT = null;
+  function extCfg() {
+    D.ext = D.ext || {};
+    if (D.ext.on === undefined) D.ext.on = true;
+    if (D.ext.live === undefined) D.ext.live = true;
+    D.ext.map = D.ext.map || {};
+    D.ext.seen = D.ext.seen || {};
+    return D.ext;
+  }
+  function groupList() { // текстовые группы полей пакета
+    var out = [];
+    Object.keys(fieldIdx).forEach(function (g) {
+      var t0 = titleById(fieldIdx[g].titles[0]); if (!t0) return;
+      var f = t0.fields.filter(function (x) { return x.g === g; })[0];
+      if (!f || f.kind !== 'text') return;
+      out.push({ g: g, k: f.k, def: f.def, titles: fieldIdx[g].titles });
+    });
+    return out;
+  }
+  function groupLabel(x) {
+    return x.k.replace(/\.Text$/, '').replace(/_/g, ' ') + ' — ' + x.titles.map(function (id) { return titleById(id).name; }).join(', ') +
+      (typeof x.def === 'string' && x.def ? ' («' + x.def + '»)' : '');
+  }
+  function secOf(v) { var m = /^(\d+):(\d{2})$/.exec(String(v || '').trim()); return m ? +m[1] * 60 + +m[2] : -1; }
+  /** Авто-сопоставление поля приложения с группой полей титров */
+  function autoGroup(n) {
+    var gl = groupList(), k = String(n || '').replace(/\.Text$/i, ''), low = k.toLowerCase();
+    var exact = gl.filter(function (x) { return x.k === n || x.k === k + '.Text'; });
+    if (exact.length) return exact.sort(function (a, b) { return b.titles.length - a.titles.length; })[0].g;
+    var pick = function (re, pred) {
+      var c = gl.filter(function (x) { return re.test(x.k.replace(/\.Text$/, '')) && (!pred || pred(x)); });
+      return c.length ? c.sort(function (a, b) { return b.titles.length - a.titles.length; })[0] : null;
+    };
+    var r = null;
+    if (/^home.?score$/.test(low)) r = pick(/^(сч[её]т|score)[ _-]?(1|хоз|home)$/i);
+    else if (/^away.?score$/.test(low)) r = pick(/^(сч[её]т|score)[ _-]?(2|гост|away)$/i);
+    else if (/^clock$/.test(low)) {
+      var c = groupList().filter(function (x) { return /^(таймер|clock|timer|игровое.?время)$/i.test(x.k.replace(/\.Text$/, '')) && secOf(x.def) >= 0; });
+      if (c.length) r = c.sort(function (a, b) { return secOf(b.def) - secOf(a.def); })[0]; // основные часы — с наибольшим временем (20:00, а не 02:00)
+    }
+    else if (/^period$/.test(low)) r = pick(/^(период|period)([ _-]?цифра)?$/i, function (x) { return /^\d+$/.test(String(x.def)); }) || pick(/^(период|period)/i);
+    else if (/^home.?fouls?$/.test(low)) r = pick(/^(фол|fouls?)[ _-]?(1|хоз|home)$/i);
+    else if (/^away.?fouls?$/.test(low)) r = pick(/^(фол|fouls?)[ _-]?(2|гост|away)$/i);
+    else if (/^shot.?clock$/.test(low)) r = pick(/^(24|shot.?clock|атака)/i);
+    return r ? r.g : null;
+  }
+  function targetOf(n) {
+    var m = extCfg().map[n];
+    if (m === '') return null;          // «не использовать»
+    if (m && fieldIdx[m]) return m;
+    return autoGroup(n);
+  }
+  function parseClock(v) { // "00:19:45.5" | "19:45" | "45.6" | "1185" → мс
+    var s = String(v == null ? '' : v).trim(); if (!s) return null;
+    var p = s.split(':'), sec = 0;
+    for (var i = 0; i < p.length; i++) { var x = parseFloat(p[i].replace(',', '.')); if (!isFinite(x)) return null; sec = sec * 60 + x; }
+    return Math.round(sec * 1000);
+  }
+  function padLike(v, def) { // «3» в поле «00» → «03»
+    v = String(v == null ? '' : v);
+    if (/^\d+$/.test(v) && typeof def === 'string' && /^0\d+$/.test(def) && v.length < def.length) while (v.length < def.length) v = '0' + v;
+    return v;
+  }
+  function applyExt(m) {
+    if (!pkg || !m || !m.f) return;
+    var X = extCfg();
+    var n = String(m.n || ''), fn = String(m.f).toLowerCase();
+    extLastAt = Date.now(); extLastMsg = m;
+    var seen = X.seen[n] = X.seen[n] || {};
+    seen.f = m.f; seen.at = extLastAt;
+    if (fn === 'settext') seen.v = m.v;
+    else seen.v = m.f + (m.v != null ? ' ' + m.v : '');
+    extPill();
+    if (!X.on) return;
+    var g = targetOf(n); if (!g) { scheduleExtUi(); return; }
+    var tids = fieldIdx[g].titles, now = CG.clock.now();
+    var fOf = function (tid) { return titleById(tid).fields.filter(function (x) { return x.g === g; })[0]; };
+    var f0 = fOf(tids[0]), cur = getVal(tids[0], f0), nv;
+    if (fn === 'settext') nv = padLike(m.v, f0.def);
+    else if (/countdown$/.test(fn)) {
+      var tm = isTimer(cur) ? Object.assign({}, cur.tm) : (function () { var ms = parseTime(cur); if (ms == null) ms = parseClock(cur) || 0; return { ms: ms, ms0: ms, run: false, at: 0, dir: -1, fmt: 'mm:ss' }; })();
+      var curMs = GTRender.timerMs(tm, now);
+      if (fn === 'suspendcountdown') { tm.ms = curMs; tm.run = false; tm.at = 0; }
+      else if (fn === 'startcountdown') { if (!tm.run) { tm.ms = curMs; tm.run = true; tm.at = now; } }
+      else if (fn === 'pausecountdown') { if (tm.run) { tm.ms = curMs; tm.run = false; tm.at = 0; } else { tm.run = true; tm.at = now; } }
+      else if (fn === 'stopcountdown') { tm.ms = tm.ms0 || 0; tm.run = false; tm.at = 0; }
+      else if (fn === 'changecountdown') { var ms = parseClock(m.v); if (ms == null) return; tm.ms = ms; if (tm.run) tm.at = now; }
+      else if (fn === 'setcountdown') { var ms2 = parseClock(m.v); if (ms2 == null) return; tm.ms = tm.ms0 = ms2; tm.run = false; tm.at = 0; }
+      else if (fn === 'adjustcountdown') { tm.ms = curMs + (parseFloat(m.v) || 0) * 1000; if (tm.run) tm.at = now; }
+      else return;
+      // десятые на последней минуте, если табло их показывает
+      if (fn === 'changecountdown' && /\.\d/.test(String(m.v)) && tm.fmt === 'mm:ss') tm.fmt = 'auto';
+      nv = { tm: tm };
+    } else return; // остальные функции vMix не относятся к полям
+    if (same(nv, cur) && tids.every(function (id) { return same(getVal(id, fOf(id)), nv); })) return;
+    tids.forEach(function (id) { setVal(id, fOf(id), nv); });
+    if (X.live) pushLive(tids); else renderEdBar();
+    if (tids.indexOf(D.sel) >= 0) { updatePreview(false); scheduleEditor(); }
+    scheduleExtUi();
+  }
+  function scheduleEditor() {
+    clearTimeout(extRefreshT);
+    extRefreshT = setTimeout(function () {
+      var a = document.activeElement;
+      if (a && $('#editor').contains(a) && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName)) { scheduleEditor(); return; } // не сбивать оператора
+      renderEditor();
+    }, 250);
+  }
+  function extPill() {
+    var p = $('#pExt'), age = extLastAt ? (Date.now() - extLastAt) / 1000 : -1;
+    var X = D ? extCfg() : { on: true };
+    if (!X.on) { p.className = 'pill'; p.textContent = 'ТАБЛО: ВЫКЛ'; return; }
+    if (age < 0) { p.className = 'pill'; p.textContent = 'ТАБЛО: —'; p.title = 'Данных с табло пока не было'; return; }
+    p.className = 'pill ' + (age < 15 ? 'ok' : 'warn');
+    p.textContent = 'ТАБЛО: ' + (age < 15 ? '●' : Math.round(age) + ' с назад');
+    p.title = 'Последнее: ' + (extLastMsg ? extLastMsg.f + ' ' + (extLastMsg.n || '') + ' ' + (extLastMsg.v == null ? '' : extLastMsg.v) : '');
+  }
+  setInterval(function () { if (extLastAt) extPill(); }, 2000);
+  var extUiT = null;
+  function scheduleExtUi() { clearTimeout(extUiT); extUiT = setTimeout(function () { saveData(); if (!$('#extDlg').hidden) renderExt(); }, 300); }
+  function renderExt() {
+    if (!pkg) return;
+    var X = extCfg(), gl = groupList();
+    $('#xOn').checked = X.on; $('#xLive').checked = X.live;
+    var age = extLastAt ? Math.round((Date.now() - extLastAt) / 1000) : -1;
+    $('#xStatus').className = 'pill ' + (age >= 0 && age < 15 ? 'ok' : age >= 0 ? 'warn' : '');
+    $('#xStatus').textContent = age < 0 ? 'нет данных' : age < 15 ? 'данные идут' : 'тишина ' + age + ' с';
+    var host = location.hostname || 'IP-этого-компьютера';
+    if (bus && bus.mode === 'firebase') {
+      $('#xHow').innerHTML = 'ScoreOCR → Настройки → <b>Куда отправлять: GT Web CG (облако)</b>:<br>адрес базы <code>' + esc(CG.normFbUrl(cfg.fbUrl)) + '</code>, комната <code>' + esc(cfg.room) + '</code>. ' +
+        '<button class="btn sm" id="xCopy">Скопировать</button><br>Нужен интернет на iPhone. Пульт должен быть открыт — он принимает данные и отправляет их в графику.';
+    } else if (bus && bus.mode === 'server') {
+      $('#xHow').innerHTML = 'ScoreOCR → Настройки → vMix: <b>IP компьютера</b> — IP этого Mac/ПК, где запущен server.js (сейчас открыт как <code>' + esc(host) + '</code>), <b>порт</b> <code>' + esc(location.port || '80') + '</code>. ' +
+        'Приложение считает систему титрования обычным vMix — менять в нём больше ничего не нужно, «Проверить связь» покажет «vMix GT Web CG».';
+    } else {
+      $('#xHow').innerHTML = 'Сейчас пульт работает без server.js и без облака — данные с табло принять некуда. Запустите server.js или включите облако в ⚙ Настройках.';
+    }
+    var names = Object.keys(X.seen).sort();
+    var opts = function (n) {
+      var m = X.map[n], auto = autoGroup(n);
+      return '<option value="*"' + (m === undefined ? ' selected' : '') + '>Авто' + (auto ? ': ' + esc(groupLabel(gl.filter(function (x) { return x.g === auto; })[0] || { k: auto, titles: [] })) : ' — не найдено') + '</option>' +
+        '<option value=""' + (m === '' ? ' selected' : '') + '>— не использовать —</option>' +
+        gl.map(function (x) { return '<option value="' + esc(x.g) + '"' + (m === x.g ? ' selected' : '') + '>' + esc(groupLabel(x)) + '</option>'; }).join('');
+    };
+    $('#xMap').innerHTML = names.length ? names.map(function (n) {
+      var sn = X.seen[n];
+      return '<tr><td><b>' + esc(n || '(без имени)') + '</b></td><td>' + esc(sn.v == null ? '' : sn.v) + '</td><td><select data-n="' + esc(n) + '" style="width:100%">' + opts(n) + '</select></td></tr>';
+    }).join('') : '<tr><td colspan="3" class="hint">Пока ничего не пришло. Включите в ScoreOCR кнопку ЭФИР.</td></tr>';
+  }
+  $('#btnExt').addEventListener('click', function () { if (!pkg) return toast('Сначала выберите пакет', true); renderExt(); $('#extDlg').hidden = false; });
+  $('#xClose').addEventListener('click', function () { $('#extDlg').hidden = true; });
+  $('#xOn').addEventListener('change', function (e) { extCfg().on = e.target.checked; saveData(); extPill(); });
+  $('#xLive').addEventListener('change', function (e) { extCfg().live = e.target.checked; saveData(); });
+  $('#xMap').addEventListener('change', function (e) {
+    var n = e.target.dataset.n; if (n == null) return;
+    var v = e.target.value, X = extCfg();
+    if (v === '*') delete X.map[n]; else X.map[n] = v;
+    saveData(); renderExt();
+  });
+  $('#xForget').addEventListener('click', function () { var X = extCfg(); X.seen = {}; X.map = {}; saveData(); renderExt(); });
+  $('#xTest').addEventListener('click', function () {
+    applyExt({ f: 'SetText', n: 'HomeScore.Text', v: '1', t: Date.now() });
+    applyExt({ f: 'SetText', n: 'AwayScore.Text', v: '0', t: Date.now() });
+    renderExt();
+  });
+  document.addEventListener('click', function (e) {
+    if (e.target.id !== 'xCopy') return;
+    var t = 'Адрес базы: ' + CG.normFbUrl(cfg.fbUrl) + '\nКомната: ' + cfg.room;
+    (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(function () { toast('Скопировано'); }).catch(function () { toast(t); });
+  });
+  window.__gtExt = applyExt; // для отладки и тестов
+
+  /* =================================================================== */
   /* Старт                                                               */
   /* =================================================================== */
   bus = new CG.Bus(function (st) {
@@ -631,6 +809,7 @@
     }
   }, syncStatus, useFirebase() ? { fb: CG.normFbUrl(cfg.fbUrl), room: CG.normRoom(cfg.room) } : null);
 
+  bus.listenExt(applyExt);
   bus.whenReady().then(function () {
     $('#pgmFrame').src = (useFirebase() ? graphicsUrl() + '&' : 'index.html?') + 'checker=1&_=' + Date.now(); // без старого кэша
     if (pkg) publish(false);

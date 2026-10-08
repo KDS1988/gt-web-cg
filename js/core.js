@@ -165,6 +165,7 @@
     var app = fbApps[fb] || (fbApps[fb] = firebase.initializeApp({ databaseURL: fb }, 'gtcg-' + Object.keys(fbApps).length));
     var db = app.database();
     this.db = db;
+    this.roomPath = 'cg/' + room;
     this.stateRef = db.ref('cg/' + room + '/state');
     this.pkgRef = db.ref('cg/' + room + '/pkg');
     db.ref('.info/serverTimeOffset').on('value', function (s) { clock.offset = s.val() || 0; });
@@ -210,6 +211,31 @@
     try { if (this.bc) this.bc.postMessage(st); } catch (e) {}
     try { localStorage.setItem('gt-web-cg-state', JSON.stringify(st)); } catch (e) {}
     return Promise.resolve(true);
+  };
+  /**
+   * Внешние данные (табло через ScoreOCR и любые программы, умеющие слать в vMix).
+   * cb({ f: Function, i: Input, n: SelectedName, v: Value, t: время }) — в порядке поступления.
+   *  - server.js: SSE-событие «ext» (приложение шлёт в http://IP:8787/api/?Function=…)
+   *  - Firebase: очередь /cg/<комната>/ext/q (приложение делает POST); пульт обрабатывает и удаляет
+   */
+  Bus.prototype.listenExt = function (cb) {
+    var self = this;
+    this.whenReady().then(function () {
+      if (self.mode === 'server' && self.es) {
+        self.es.addEventListener('ext', function (e) { try { cb(JSON.parse(e.data)); } catch (er) {} });
+      } else if (self.mode === 'firebase' && self.db) {
+        var started = clock.now();
+        var q = self.db.ref(self.roomPath + '/ext/q');
+        q.on('child_added', function (snap) {
+          var m = snap.val();
+          snap.ref.remove().catch(function () {});
+          if (!m) return;
+          // команды, пролежавшие в очереди до открытия пульта, уже неактуальны
+          if (typeof m.t === 'number' && m.t < started - 5000) return;
+          cb(m);
+        });
+      }
+    });
   };
   /** Опубликовать пакет графики (её заберут все экраны графики этой комнаты) */
   Bus.prototype.putPkg = function (pkg) {

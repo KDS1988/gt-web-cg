@@ -32,6 +32,7 @@ try { state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch (e) { /* 
 let pkgBody = null;
 try { pkgBody = fs.readFileSync(PKG_FILE); } catch (e) { /* нет пакета */ }
 const clients = new Set();
+let extLast = null; // последняя команда от внешнего источника (табло)
 
 function broadcast() {
   const msg = 'data: ' + JSON.stringify(Object.assign({}, state, { now: Date.now() })) + '\n\n';
@@ -59,6 +60,24 @@ const server = http.createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,OPTIONS');
   if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
 
+  // ---------- совместимость с HTTP API vMix (для ScoreOCR и других программ, которые умеют слать в vMix) ----------
+  // Приложение настраивается на IP этого компьютера и порт 8787 вместо vMix:8088 — больше ничего менять не нужно.
+  // /api/?Function=SetText&Input=…&SelectedName=HomeScore.Text&Value=3
+  // /api/?Function=SuspendCountdown|StartCountdown|PauseCountdown|StopCountdown|ChangeCountdown|SetCountdown|AdjustCountdown&…
+  if ((p === '/api' || p === '/api/') && (req.method === 'GET' || req.method === 'POST')) {
+    const q = url.searchParams;
+    const fn = q.get('Function') || q.get('function');
+    if (!fn) { // «Проверить связь» в приложении
+      res.writeHead(200, { 'Content-Type': 'text/xml; charset=utf-8' });
+      return res.end('<vmix><version>GT Web CG</version><edition>web</edition><inputs/></vmix>');
+    }
+    const msg = { f: fn, i: q.get('Input') || '', n: q.get('SelectedName') || '', v: q.has('Value') ? q.get('Value') : null, t: Date.now() };
+    extLast = msg;
+    const line = 'event: ext\ndata: ' + JSON.stringify(msg) + '\n\n';
+    for (const c of clients) { try { c.write(line); } catch (e) { clients.delete(c); } }
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+    return res.end('Function completed successfully.');
+  }
   if (p === '/api/state' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': MIME['.json'], 'Cache-Control': 'no-store' });
     return res.end(JSON.stringify(Object.assign({}, state, { now: Date.now() })));
@@ -117,6 +136,7 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log('\n  GT Web CG — сервер запущен\n');
   console.log(`  Графика (vMix → Web Browser):  http://localhost:${PORT}/`);
   console.log(`  Пульт управления:              http://localhost:${PORT}/control.html`);
+  console.log(`  Для ScoreOCR (как vMix):        IP этого компьютера, порт ${PORT}`);
   console.log(`  Импорт .gtzip:                 http://localhost:${PORT}/import.html`);
   ips.forEach(ip => console.log(`  В локальной сети:              http://${ip}:${PORT}/  (графика)   http://${ip}:${PORT}/control.html`));
   console.log('\n  Ctrl+C — остановить\n');
