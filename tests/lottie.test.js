@@ -12,6 +12,7 @@ const anim = {
     txt('Счет 1', '00'),
     Object.assign(txt('Period BG', 'Период'), {}),
     { ty: 2, nm: 'Federation Emblem', refId: 'image_0', ks: {} },
+    { ty: 2, nm: '1-X', refId: 'image_0', ks: {} },
     { ty: 2, nm: 'matte', refId: 'image_1', td: 1, ks: {} },
     { ty: 2, nm: 'Pattern', refId: 'image_1', tt: 1, ks: {} },
     txt('Счет 1', '00')
@@ -22,7 +23,7 @@ const r = G.analyze(anim, 'табло.json');
 const t = r.title;
 assert.strictEqual(t.kind, 'lottie');
 assert.deepStrictEqual([t.mk.in, t.mk.hold, t.mk.out], [0, 46, 219]);
-assert.deepStrictEqual(t.fields.map(f => f.k), ['Счет 1.Text', 'Period BG.Text', 'Federation Emblem.Source', 'Счет 1 2.Text']);
+assert.deepStrictEqual(t.fields.map(f => f.k), ['Счет 1.Text', 'Period BG.Text', 'Federation Emblem.Source', 'Federation Emblem.Visible', '1-X.Visible', 'Счет 1 2.Text']);
 assert.strictEqual(t.anim.layers[1].t.a.length, 0, 'пустой аниматор Animation Composer убран');
 assert.strictEqual(anim.layers[1].t.a.length, 1, 'исходный JSON не изменён');
 assert.deepStrictEqual(r.fonts, [{ family: 'BebasNeueBold', variants: ['400'], lottie: 'BebasNeueBold' }]);

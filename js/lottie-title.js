@@ -72,6 +72,9 @@
     return res;
   }
 
+  // оформление (фоны, узоры, линии, разделители) полями не делаем
+  var DECOR = /^(:|[-–—|\/.]+)$|(^|[\s_-])(bg|pattern|line|lines|фон|узор|линия|линии|подложка)(\s|[_-]|\d|$)/i;
+  var ICON = /(^|[\s_-])[XVХ✓✗](\s|\d|$)/i;
   function uniq(name, used) {
     var b = String(name || 'Слой').trim() || 'Слой', n = b, k = 2;
     while (used[n]) n = b + ' ' + (k++);
@@ -106,8 +109,13 @@
         fields.push({ k: uniq(l.nm, used) + '.Text', o: l.nm, li: i, kind: 'text', label: String(l.nm || 'Текст'), def: String(s.t == null ? '' : s.t).replace(/\r/g, '\n') });
       } else if (l.ty === 2 && assets[l.refId]) {
         var a = assets[l.refId];
-        // логотипы и эмблемы — небольшие картинки; фоны и линии полями не делаем
-        if (a.w >= 8 && a.h >= 8 && a.w <= 600 && a.h <= 600) fields.push({ k: uniq(l.nm, used) + '.Source', o: l.nm, li: i, kind: 'image', label: String(l.nm || 'Картинка'), def: '' });
+        // логотипы, эмблемы, значки — небольшие картинки; фоны и линии полями не делаем
+        if (a.w >= 8 && a.h >= 8 && a.w <= 600 && a.h <= 600 && !DECOR.test(String(l.nm).trim())) {
+          var nm = uniq(l.nm, used);
+          // значки-отметки (1-X, 1-V …) только включаются/выключаются, логотипы ещё и меняются
+          if (!ICON.test(l.nm)) fields.push({ k: nm + '.Source', o: l.nm, li: i, kind: 'image', label: String(l.nm || 'Картинка'), def: '' });
+          fields.push({ k: nm + '.Visible', o: l.nm, li: i, kind: 'visible', label: String(l.nm || 'Картинка'), def: !ICON.test(l.nm) }); // отметки по умолчанию выключены
+        }
       }
       if (l.ddd) warnings.push('3D-слой «' + l.nm + '» — lottie показывает 3D упрощённо');
     });
@@ -191,6 +199,19 @@
     return null;
   };
 
+  /** Все элементы с именем слоя (включая копии в прекомпозициях-масках), по порядку обхода */
+  LottieTitle.prototype._all = function (f) {
+    var out = [], ty = f.kind === 'text' ? 5 : 2;
+    (function walk(list) {
+      (list || []).forEach(function (e) {
+        if (!e || !e.data) return;
+        if (e.data.nm === f.o && e.data.ty === ty) out.push(e);
+        if (e.elements) walk(e.elements);
+      });
+    })(this.anim && this.anim.renderer && this.anim.renderer.elements);
+    return out;
+  };
+
   LottieTitle.prototype.setData = function (data, animate) {
     var self = this, changed = [];
     data = data || {};
@@ -211,11 +232,17 @@
       if (f.kind === 'text') {
         var s = R.textOf(v, now);
         if (!force && self['t:' + f.k] === s) return;
-        var e = self._el(f);
-        if (!e || !e.textProperty) return;
-        var keys = (e.textProperty.data && e.textProperty.data.d && e.textProperty.data.d.k) || [];
         if (self['t:' + f.k] === undefined && s === f.def && !force) { self['t:' + f.k] = s; return; }
-        for (var i = 0; i < Math.max(1, keys.length); i++) e.updateDocumentData({ t: s.replace(/\n/g, '\r') }, i);
+        var main = self._el(f);
+        if (!main || !main.textProperty) return;
+        // сам слой + его копии в масках (подготовка T → Alpha Matte кладёт туда тексты)
+        var list = [main].concat(self._all(f).filter(function (x) { return x !== main && (x.data.t && x.data.t.d && JSON.stringify(x.data.t.d.k[0].s.t) === JSON.stringify(f.def)); }));
+        if (!self['tl:' + f.k]) self['tl:' + f.k] = list;
+        self['tl:' + f.k].forEach(function (e) {
+          if (!e.textProperty) return;
+          var keys = (e.textProperty.data && e.textProperty.data.d && e.textProperty.data.d.k) || [];
+          for (var i = 0; i < Math.max(1, keys.length); i++) e.updateDocumentData({ t: s.replace(/\n/g, '\r') }, i);
+        });
         self['t:' + f.k] = s;
         any = true;
       } else if (f.kind === 'image') {
@@ -229,6 +256,13 @@
         node.setAttribute('preserveAspectRatio', src ? 'xMidYMid meet' : 'xMidYMid slice');
         self['i:' + f.k] = src;
         any = true;
+      } else if (f.kind === 'visible') {
+        var on = !(v === false || v === 'false' || v === 0 || v === '0');
+        if (!force && self['v:' + f.k] === on) return;
+        var ve = self._el(f);
+        if (!ve || !ve.layerElement) return;
+        ve.layerElement.style.visibility = on ? '' : 'hidden';
+        self['v:' + f.k] = on;
       }
     });
     if (any) this._force = true;

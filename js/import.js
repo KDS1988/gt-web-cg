@@ -81,8 +81,10 @@
       return chain;
     });
   }
-  function loadAnim(el, t, renderer) {
+  function loadAnim(el, t, renderer, noMattes) {
     var a = JSON.parse(JSON.stringify(t.anim)); GTLottie.sanitize(a);
+    // для замеров маски (track matte) рисуем обычными слоями: внутри <mask> их рамку не измерить
+    if (noMattes) a.layers.forEach(function (l) { if (l.td) { delete l.td; l.hd = false; } if (l.tt) { l._tt = l.tt; delete l.tt; } });
     var an = lottie.loadAnimation({ container: el, renderer: renderer, loop: false, autoplay: false, animationData: a, rendererSettings: { preserveAspectRatio: 'xMidYMid meet' } });
     return new Promise(function (res) {
       var done = false, ok = function () { if (!done) { done = true; res(an); } };
@@ -95,42 +97,57 @@
       measureBox.style.cssText = 'position:fixed;left:-30000px;top:0;pointer-events:none;opacity:0';
       document.body.appendChild(measureBox);
     }
-    var box = document.createElement('div');
-    box.style.cssText = 'position:absolute;left:0;top:0;width:' + t.w + 'px;height:' + t.h + 'px';
-    measureBox.appendChild(box);
-    return loadAnim(box, t, 'svg').then(function (an) {
+    var mk = function () {
+      var box = document.createElement('div');
+      box.style.cssText = 'position:absolute;left:0;top:0;width:' + t.w + 'px;height:' + t.h + 'px';
+      measureBox.appendChild(box);
+      return box;
+    };
+    var box = mk();
+    return loadAnim(box, t, 'svg', true).then(function (an) {
       an.goToAndStop(t.mk.hold, true);
-      var B = box.getBoundingClientRect(), all = null, objs = [], els = an.renderer.elements;
-      var rectOf = function (e) {
-        var r = e.layerElement.getBoundingClientRect();
-        return { x1: r.left - B.left, y1: r.top - B.top, x2: r.right - B.left, y2: r.bottom - B.top };
-      };
+      var B = box.getBoundingClientRect(), all = null, objs = [], els = an.renderer.elements, rects = [];
       els.forEach(function (e, i) {
-        if (!e || !e.data || e.data.td || !e.layerElement || e.data.hd) return;
-        var r = rectOf(e);
-        // слой с маской (track matte) виден только внутри неё
-        var m = e.data.tt && els[i - 1] && els[i - 1].layerElement ? rectOf(els[i - 1]) : null;
-        if (m) r = { x1: Math.max(r.x1, m.x1), y1: Math.max(r.y1, m.y1), x2: Math.min(r.x2, m.x2), y2: Math.min(r.y2, m.y2) };
+        if (!e || !e.layerElement) { rects[i] = null; return; }
+        var r = e.layerElement.getBoundingClientRect();
+        rects[i] = r.width && r.height ? { x1: r.left - B.left, y1: r.top - B.top, x2: r.right - B.left, y2: r.bottom - B.top } : null;
+      });
+      els.forEach(function (e, i) {
+        if (!e || !e.data || !rects[i] || e.data.hd) return;
+        var L = t.anim.layers[i] || {};
+        if (L.td) return; // сама маска — не объект титра
+        var r = rects[i];
+        if (L.tt) { // слой виден только внутри маски — слоя над ним
+          var m = rects[i - 1];
+          if (!m) return;
+          r = { x1: Math.max(r.x1, m.x1), y1: Math.max(r.y1, m.y1), x2: Math.min(r.x2, m.x2), y2: Math.min(r.y2, m.y2) };
+        }
         r = { x1: Math.max(0, r.x1), y1: Math.max(0, r.y1), x2: Math.min(t.w, r.x2), y2: Math.min(t.h, r.y2) };
         if (r.x2 - r.x1 < 1 || r.y2 - r.y1 < 1) return;
-        var o = { n: e.data.nm, t: e.data.ty === 5 ? 'text' : e.data.ty === 2 ? 'image' : 'shape', x: Math.round(r.x1), y: Math.round(r.y1), w: Math.round(r.x2 - r.x1), h: Math.round(r.y2 - r.y1) };
-        objs.push(o);
+        objs.push({ n: e.data.nm, t: e.data.ty === 5 ? 'text' : e.data.ty === 2 ? 'image' : 'shape', x: Math.round(r.x1), y: Math.round(r.y1), w: Math.round(r.x2 - r.x1), h: Math.round(r.y2 - r.y1) });
         all = all ? { x1: Math.min(all.x1, r.x1), y1: Math.min(all.y1, r.y1), x2: Math.max(all.x2, r.x2), y2: Math.max(all.y2, r.y2) } : r;
       });
-      var svg = box.querySelector('svg').cloneNode(true);
       an.destroy(); box.remove();
       t.objects = objs.filter(function (o) { return o.t === 'image' || o.t === 'text'; });
-      // картинка-поле — только логотип/эмблема: заметно меньше всего титра (фоны и плашки полями не делаем)
+      // картинка-поле — только логотип/эмблема/значок: заметно меньше всего титра (фоны и плашки полями не делаем)
       var area = all ? (all.x2 - all.x1) * (all.y2 - all.y1) : t.w * t.h;
       t.fields = t.fields.filter(function (f) {
-        if (f.kind !== 'image') return true;
+        if (f.kind !== 'image' && f.kind !== 'visible') return true;
         var o = objs.filter(function (x) { return x.n === f.o; })[0];
         return o && o.w * o.h <= area * 0.2 && Math.min(o.w, o.h) >= 8;
       });
       if (all) t.box = { x: Math.round(all.x1), y: Math.round(all.y1), w: Math.round(all.x2 - all.x1), h: Math.round(all.y2 - all.y1) };
       // рамка всего титра — для канала по умолчанию в пульте (верх экрана / низ / полноэкранный)
+      var thumbF = t.mk.hold;
+      if (!t.box) { t.box = { x: 0, y: 0, w: t.w, h: t.h }; thumbF = Math.floor((t.mk.in + t.mk.hold) / 2); } // на стоп-кадре пусто (шторка-перебивка): полноэкранный, миниатюра — из середины
       if (t.box) t.objects.unshift({ n: '__frame', t: 'rect', x: t.box.x, y: t.box.y, w: t.box.w, h: t.box.h });
-      return thumbOne(t, svg);
+      var box2 = mk();
+      return loadAnim(box2, t, 'svg').then(function (an2) {
+        an2.goToAndStop(thumbF, true);
+        var svg = box2.querySelector('svg').cloneNode(true);
+        an2.destroy(); box2.remove();
+        return thumbOne(t, svg);
+      });
     });
   }
   /** Миниатюра: тот же SVG на стоп-кадре (hold) со шрифтами пакета, обрезанный по рамке титра */

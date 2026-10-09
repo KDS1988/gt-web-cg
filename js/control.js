@@ -100,16 +100,26 @@
     return isLinked(f) ? fieldIdx[f.g].titles.slice() : [tid];
   }
 
-  /* Канал по умолчанию: полноэкранные — 1, верх экрана — 3/4, остальные — 2 */
+  /* Канал по умолчанию: крупные/полноэкранные — 1, низ и середина — 2, верх экрана — 3 (а титры, что с ним
+     не пересекаются, — 4). Перебивка (короткая полноэкранная, без полей) — 4, поверх всего.
+     Титры в одном месте экрана (варианты табло) попадают на один канал и заменяют друг друга. */
   function defaultChannels() {
-    var used3 = false, map = {};
+    var map = {}, top3 = [];
+    var overlap = function (a, b) { return a.x1 < b.x2 && b.x1 < a.x2 && a.y1 < b.y2 && b.y1 < a.y2; };
     pkg.titles.forEach(function (t) {
       var x1 = 1e9, y1 = 1e9, x2 = -1e9, y2 = -1e9;
       t.objects.forEach(function (o) { if (o.t === 'layer' || !o.w || !o.h) return; x1 = Math.min(x1, o.x); y1 = Math.min(y1, o.y); x2 = Math.max(x2, o.x + o.w); y2 = Math.max(y2, o.y + o.h); });
       var W = t.w || 1920, H = t.h || 1080;
+      if (x2 < x1) { x1 = 0; y1 = 0; x2 = W; y2 = H; }
+      var r = { x1: x1, y1: y1, x2: x2, y2: y2 };
       var area = Math.max(0, Math.min(x2, W) - Math.max(x1, 0)) * Math.max(0, Math.min(y2, H) - Math.max(y1, 0)) / (W * H);
-      if (area > 0.5) map[t.id] = '1';
-      else if (y2 < H * 0.3) { map[t.id] = used3 ? '4' : '3'; used3 = true; }
+      var stinger = t.kind === 'lottie' && !t.fields.length && t.mk && t.mk.out == null && (t.mk.op - t.mk.ip) / (t.fr || 25) <= 3 && area > 0.5;
+      if (stinger) map[t.id] = '4';
+      else if (area > (t.kind === 'lottie' ? 0.35 : 0.5)) map[t.id] = '1';
+      else if (y2 < H * 0.3) {
+        if (!top3.length || top3.some(function (b) { return overlap(b, r); })) { map[t.id] = '3'; top3.push(r); }
+        else map[t.id] = '4';
+      }
       else map[t.id] = '2';
     });
     return map;
@@ -300,7 +310,7 @@
   function renderEditor() {
     var E = $('#editor');
     if (!pkg) {
-      E.innerHTML = '<div class="empty-state"><h2>Нет пакета графики</h2><p>Добавьте титры vMix GT: <a href="import.html">Импорт .gtzip</a>' +
+      E.innerHTML = '<div class="empty-state"><h2>Нет пакета графики</h2><p>Добавьте титры vMix GT или After Effects: <a href="import.html">Импорт титров</a>' +
         (repoPkgs.length ? ' или выберите пакет из репозитория в списке сверху.' : '.') + '</p></div>';
       return;
     }
@@ -529,7 +539,7 @@
     var repo = repoPkgs.filter(function (r) { return !list.some(function (p) { return p.id === r.id; }); });
     if (repo.length) h += '<optgroup label="Из репозитория">' + repo.map(function (r) { return '<option value="repo:' + esc(r.file) + '">📦 ' + esc(r.name) + '</option>'; }).join('') + '</optgroup>';
     if (!list.length && !repo.length) h = '<option value="">— нет пакетов —</option>';
-    h += '<option value="import">＋ Импорт .gtzip…</option>';
+    h += '<option value="import">＋ Импорт титров (.gtzip, AE)…</option>';
     sel.innerHTML = h;
     sel.value = pkg ? 'lib:' + pkg.id : '';
   }

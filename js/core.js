@@ -237,12 +237,23 @@
       }
     });
   };
+  /** Пакет из Firebase: анимации Lottie обратно из строки */
+  function unpackFb(p) {
+    if (p && p.titles) {
+      if (!Array.isArray(p.titles)) p.titles = Object.keys(p.titles).sort(function (a, b) { return a - b; }).map(function (k) { return p.titles[k]; });
+      p.titles.forEach(function (t) { if (t && t.animJson) { try { t.anim = JSON.parse(t.animJson); } catch (e) {} delete t.animJson; } });
+    }
+    return p;
+  }
   /** Опубликовать пакет графики (её заберут все экраны графики этой комнаты) */
   Bus.prototype.putPkg = function (pkg) {
     var body = JSON.stringify(pkg);
     if (this.mode === 'firebase') {
       if (!this.pkgRef) return Promise.reject(new Error('нет связи с Firebase'));
-      return this.pkgRef.set(JSON.parse(body)).then(function () { return true; });
+      // Firebase хранит дерево узлов и выбрасывает пустые массивы/объекты — анимацию Lottie кладём строкой
+      var fbPkg = JSON.parse(body);
+      (fbPkg.titles || []).forEach(function (t) { if (t.anim) { t.animJson = JSON.stringify(t.anim); delete t.anim; } });
+      return this.pkgRef.set(fbPkg).then(function () { return true; });
     }
     if (this.mode === 'server') {
       return fetch('api/pkg', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: body })
@@ -251,7 +262,7 @@
     return idbSet('active-pkg', pkg);
   };
   Bus.prototype.getPkg = function () {
-    if (this.mode === 'firebase') return this.pkgRef ? this.pkgRef.once('value').then(function (s) { return s.val(); }) : Promise.resolve(null);
+    if (this.mode === 'firebase') return this.pkgRef ? this.pkgRef.once('value').then(function (s) { return unpackFb(s.val()); }) : Promise.resolve(null);
     if (this.mode === 'server') return fetch('api/pkg', { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; });
     return idbGet('active-pkg');
   };
