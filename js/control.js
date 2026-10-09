@@ -274,12 +274,14 @@
   }
   function isTimer(v) { return v && typeof v === 'object' && v.tm; }
   function parseTime(s) {
-    s = String(s || '').trim();
+    s = String(s || '').trim().replace(/^(\d+)\.(\d{2})$/, '$1:$2'); // «20.00» — минуты.секунды, как на табло
     var m = /^(?:(\d+):)?(\d+)(?:[.,](\d))?$/.exec(s.replace(/^(\d+):(\d+):(\d+)$/, function (a, h, mm, ss) { return (h * 60 + +mm) + ':' + ss; }));
     if (!m) return null;
     return ((+(m[1] || 0)) * 60 + (+m[2])) * 1000 + (m[3] ? +m[3] * 100 : 0);
   }
-  function looksTime(s) { return /^\d{1,3}:\d{2}$/.test(String(s || '').trim()); }
+  function looksTime(s) { return /^\d{1,3}[:.]\d{2}$/.test(String(s || '').trim()); }
+  /** Формат таймера под вид значения в титре: «20.00» → мм.сс, иначе мм:сс */
+  function fmtLike(v) { return /^\d{1,3}\.\d{2}$/.test(String(v == null ? '' : v).trim()) ? 'mm.ss' : 'mm:ss'; }
   function isInt(s) { return /^-?\d+$/.test(String(s || '').trim()); }
 
   function renderEdBar() {
@@ -338,7 +340,7 @@
           '<input type="text" data-act="tset" placeholder="мм:сс" value="" title="Установить время и нажать Enter">' +
           '<button class="btn sm" data-act="treset" title="Вернуть ' + GTRender.fmtTimer(tm.ms0 || 0, 'mm:ss', -1) + '">↺</button>' +
           '<button class="btn sm" data-act="tdir" title="Направление">' + (tm.dir < 0 ? '↓ обратный' : '↑ прямой') + '</button>' +
-          '<select data-act="tfmt" title="Формат">' + [['mm:ss', 'мм:сс'], ['m:ss', 'м:сс'], ['auto', 'м:сс → сс.д'], ['hh:mm:ss', 'чч:мм:сс']].map(function (o) { return '<option value="' + o[0] + '"' + (tm.fmt === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>' +
+          '<select data-act="tfmt" title="Формат">' + [['mm:ss', 'мм:сс'], ['m:ss', 'м:сс'], ['auto', 'м:сс → сс.д'], ['mm.ss', 'мм.сс'], ['auto.', 'м.сс → сс.д'], ['hh:mm:ss', 'чч:мм:сс']].map(function (o) { return '<option value="' + o[0] + '"' + (tm.fmt === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>' +
           '<button class="ibtn on" data-act="timer" title="Выключить таймер (оставить текст)">⏱</button></div>';
       } else {
         var sv = String(v == null ? '' : v);
@@ -413,7 +415,7 @@
       if (isTimer(v)) change(t, f, GTRender.textOf(v, CG.clock.now()), true, true);
       else {
         var ms = parseTime(v); if (ms == null) ms = 0;
-        change(t, f, { tm: { ms: ms, ms0: ms, run: false, at: 0, dir: -1, fmt: 'mm:ss' } }, true, true);
+        change(t, f, { tm: { ms: ms, ms0: ms, run: false, at: 0, dir: -1, fmt: fmtLike(v) } }, true, true);
       }
       return;
     }
@@ -647,7 +649,7 @@
     return x.k.replace(/\.Text$/, '').replace(/_/g, ' ') + ' — ' + x.titles.map(function (id) { return titleById(id).name; }).join(', ') +
       (typeof x.def === 'string' && x.def ? ' («' + x.def + '»)' : '');
   }
-  function secOf(v) { var m = /^(\d+):(\d{2})$/.exec(String(v || '').trim()); return m ? +m[1] * 60 + +m[2] : -1; }
+  function secOf(v) { var m = /^(\d+)[:.](\d{2})$/.exec(String(v || '').trim()); return m ? +m[1] * 60 + +m[2] : -1; }
   /** Авто-сопоставление поля приложения с группой полей титров */
   function autoGroup(n) {
     var gl = groupList(), k = String(n || '').replace(/\.Text$/i, ''), low = k.toLowerCase();
@@ -661,7 +663,7 @@
     if (/^home.?score$/.test(low)) r = pick(/^(сч[её]т|score)[ _-]?(1|хоз|home)$/i);
     else if (/^away.?score$/.test(low)) r = pick(/^(сч[её]т|score)[ _-]?(2|гост|away)$/i);
     else if (/^clock$/.test(low)) {
-      var c = groupList().filter(function (x) { return /^(таймер|clock|timer|игровое.?время)$/i.test(x.k.replace(/\.Text$/, '')) && secOf(x.def) >= 0; });
+      var c = groupList().filter(function (x) { return /^(таймер|clock|timer|время|игровое.?время)$/i.test(x.k.replace(/\.Text$/, '')) && secOf(x.def) >= 0; });
       if (c.length) r = c.sort(function (a, b) { return secOf(b.def) - secOf(a.def); })[0]; // основные часы — с наибольшим временем (20:00, а не 02:00)
     }
     else if (/^period$/.test(low)) r = pick(/^(период|period)([ _-]?цифра)?$/i, function (x) { return /^\d+$/.test(String(x.def)); }) || pick(/^(период|period)/i);
@@ -704,7 +706,7 @@
     var f0 = fOf(tids[0]), cur = getVal(tids[0], f0), nv;
     if (fn === 'settext') nv = padLike(m.v, f0.def);
     else if (/countdown$/.test(fn)) {
-      var tm = isTimer(cur) ? Object.assign({}, cur.tm) : (function () { var ms = parseTime(cur); if (ms == null) ms = parseClock(cur) || 0; return { ms: ms, ms0: ms, run: false, at: 0, dir: -1, fmt: 'mm:ss' }; })();
+      var tm = isTimer(cur) ? Object.assign({}, cur.tm) : (function () { var ms = parseTime(cur); if (ms == null) ms = parseClock(cur) || 0; return { ms: ms, ms0: ms, run: false, at: 0, dir: -1, fmt: fmtLike(cur) }; })();
       var curMs = GTRender.timerMs(tm, now);
       if (fn === 'suspendcountdown') { tm.ms = curMs; tm.run = false; tm.at = 0; }
       else if (fn === 'startcountdown') { if (!tm.run) { tm.ms = curMs; tm.run = true; tm.at = now; } }
@@ -716,6 +718,7 @@
       else return;
       // десятые на последней минуте, если табло их показывает
       if (fn === 'changecountdown' && /\.\d/.test(String(m.v)) && tm.fmt === 'mm:ss') tm.fmt = 'auto';
+      if (fn === 'changecountdown' && /\.\d/.test(String(m.v)) && tm.fmt === 'mm.ss') tm.fmt = 'auto.';
       nv = { tm: tm };
     } else return; // остальные функции vMix не относятся к полям
     if (same(nv, cur) && tids.every(function (id) { return same(getVal(id, fOf(id)), nv); })) return;

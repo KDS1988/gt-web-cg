@@ -2,10 +2,10 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<title>Импорт .gtzip · GT Web CG</title>
+<title>Импорт титров · GT Web CG</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="stylesheet" href="fonts/fonts.css?v=20261008a">
-<link rel="stylesheet" href="css/control.css?v=20261008a">
+<link rel="stylesheet" href="fonts/fonts.css?v=20261009a">
+<link rel="stylesheet" href="css/control.css?v=20261009a">
 <style>
   .imp{max-width:1280px;margin:0 auto;padding:16px 16px 60px}
   .drop{border:2px dashed #2a4a80;border-radius:14px;padding:38px 20px;text-align:center;background:#081124;cursor:pointer;transition:.15s}
@@ -37,16 +37,17 @@
 <body>
 <header class="top">
   <div class="tlogo">GT</div>
-  <div class="ttl">ИМПОРТ .GTZIP<small>Титры vMix GT → веб-титрование без vMix</small></div>
+  <div class="ttl">ИМПОРТ ТИТРОВ<small>vMix GT (.gtzip) и After Effects (Lottie .json) → веб-титрование без vMix</small></div>
   <div class="pills"></div>
   <div class="tact"><a class="btn" href="control.html">← В пульт</a></div>
 </header>
 <div class="imp">
   <div class="drop" id="drop">
-    <h2>Перетащите сюда титры .gtzip</h2>
+    <h2>Перетащите сюда титры .gtzip или .json из After Effects</h2>
     <p>Можно сразу несколько файлов или один .zip, внутри которого лежат .gtzip (как папка «Титры»).</p>
+    <p>After Effects: экспорт Bodymovin (Lottie .json, Glyphs выкл., Include in json вкл.). Маркеры композиции <b>in / hold / out</b> задают появление, стоп-кадр и уход. Файлы шрифтов (.ttf/.otf) можно бросить сюда же.</p>
     <p><button class="btn take" id="pick">Выбрать файлы…</button></p>
-    <input type="file" id="file" multiple accept=".gtzip,.zip" hidden>
+    <input type="file" id="file" multiple accept=".gtzip,.zip,.json,.ttf,.otf,.woff,.woff2" hidden>
   </div>
   <div id="work" hidden>
     <div class="steps">
@@ -57,7 +58,7 @@
       </div>
       <div class="card">
         <h3>Проверка анимации</h3>
-        <div class="screen"><iframe id="pvw" src="index.html?pvw=1&checker=1&v=20261008a" title="Preview"></iframe></div>
+        <div class="screen"><iframe id="pvw" src="index.html?pvw=1&checker=1&v=20261009a" title="Preview"></iframe></div>
         <div class="row"><button class="btn take" id="bIn">▶ IN</button><button class="btn" id="bOut">◼ OUT</button>
           <span class="hint" id="pvwHint">Нажмите на титр слева</span></div>
         <h3 style="margin-top:16px">Шрифты</h3>
@@ -79,10 +80,12 @@
     </div>
   </div>
 </div>
-<script src="vendor/jszip.min.js?v=20261008a"></script>
-<script src="js/core.js?v=20261008a"></script>
-<script src="js/gt-parse.js?v=20261008a"></script>
-<script src="js/gt-render.js?v=20261008a"></script>
-<script src="js/import.js?v=20261008a"></script>
+<script src="vendor/jszip.min.js?v=20261009a"></script>
+<script src="js/core.js?v=20261009a"></script>
+<script src="js/gt-parse.js?v=20261009a"></script>
+<script src="js/gt-render.js?v=20261009a"></script>
+<script src="vendor/lottie.min.js?v=20261009a"></script>
+<script src="js/lottie-title.js?v=20261009a"></script>
+<script src="js/import.js?v=20261009a"></script>
 </body>
 </html>

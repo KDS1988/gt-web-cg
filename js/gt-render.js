@@ -94,7 +94,7 @@
     fmt = fmt || 'mm:ss';
     // обратный отсчёт округляем вверх (20:00 → 19:59 только через секунду)
     var tot = dir < 0 ? Math.ceil(ms / 1000 - 1e-6) : Math.floor(ms / 1000 + 1e-6);
-    if (fmt === 'auto' && ms < 60000 && dir < 0) {
+    if ((fmt === 'auto' || fmt === 'auto.') && ms < 60000 && dir < 0) {
       var t = Math.ceil(ms / 100 - 1e-6) / 10;
       return t.toFixed(1);
     }
@@ -102,7 +102,10 @@
     if (fmt === 'hh:mm:ss') return pad(h) + ':' + pad(m) + ':' + pad(s);
     var mm = h * 60 + m;
     if (fmt === 'm:ss' || fmt === 'auto') return mm + ':' + pad(s);
+    if (fmt === 'auto.') return mm + '.' + pad(s);
     if (fmt === 'ss') return String(tot);
+    if (fmt === 'mm.ss') return pad(mm) + '.' + pad(s);
+    if (fmt === 'm.ss') return mm + '.' + pad(s);
     return pad(mm) + ':' + pad(s);
   }
   function textOf(v, now) {
@@ -679,7 +682,7 @@
           return;
         }
         if (cur) self._kill(cur.title);
-        var T = new Title(self, self.titles[want.t], want.data || {}, 10 + (parseInt(k, 10) || 0));
+        var T = makeTitle(self, self.titles[want.t], want.data || {}, 10 + (parseInt(k, 10) || 0));
         T.playIn();
         self.ch[k] = { title: T, key: want.t, take: want.take };
       });
@@ -690,18 +693,27 @@
     this.dying.push(T);
     T.playOut();
   };
+  /** Титр GT или Lottie (After Effects) — по виду описания */
+  function makeTitle(stage, def, data, z) {
+    if (def.kind === 'lottie') {
+      if (!root.GTRender.LottieTitle || !root.lottie) throw new Error('Для титров After Effects нужны vendor/lottie.min.js и js/lottie-title.js');
+      return new root.GTRender.LottieTitle(stage, def, data, z);
+    }
+    return new Title(stage, def, data, z);
+  }
   Stage.prototype.destroy = function () { cancelAnimationFrame(this._raf); clearInterval(this._iv); this.clear(); };
 
   /** Статичный кадр титра в конечном состоянии In (для миниатюр/проверки) */
   Stage.prototype.still = function (titleId, data, ch) {
     var self = this;
     return this.ready.then(function () {
-      var T = new Title(self, self.titles[titleId], data || {}, 10 + (ch || 1));
+      var T = makeTitle(self, self.titles[titleId], data || {}, 10 + (ch || 1));
+      self.ch['s' + (ch || 1)] = { title: T, key: titleId, take: -1 };
+      if (T.isLottie) return T.freeze().then(function () { return T; });
       T.el.style.visibility = '';
       T.phase = 'idle';
       T.held = { list: (T.def.sb && T.def.sb.in) || [], mode: 'in' };
       T.dirty = true;
-      self.ch['s' + (ch || 1)] = { title: T, key: titleId, take: -1 };
       return T;
     });
   };

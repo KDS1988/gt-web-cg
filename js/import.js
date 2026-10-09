@@ -26,19 +26,140 @@
   document.addEventListener('dragover', function (e) { e.preventDefault(); });
   document.addEventListener('drop', function (e) { e.preventDefault(); if (!drop.contains(e.target)) handle([].slice.call(e.dataTransfer.files)); });
 
+  var DROP_H = 'Перетащите сюда титры .gtzip или .json из After Effects';
   function handle(files) {
-    files = files.filter(function (f) { return /\.(gtzip|zip)$/i.test(f.name); });
-    if (!files.length) { toast('Нужны файлы .gtzip или .zip', true); return; }
+    var fonts = files.filter(function (f) { return /\.(ttf|otf|woff2?)$/i.test(f.name); });
+    files = files.filter(function (f) { return /\.(gtzip|zip|json)$/i.test(f.name); });
+    if (!files.length && fonts.length && pkg) { addFontFiles(fonts, null); return; }
+    if (!files.length) { toast('Нужны файлы .gtzip, .zip или .json (Bodymovin)', true); return; }
     drop.querySelector('h2').textContent = 'Разбираю ' + files.length + ' файл(ов)…';
-    srcName = files.length === 1 ? files[0].name.replace(/\.(gtzip|zip)$/i, '') : '';
-    Promise.all(files.map(function (f) { return f.arrayBuffer().then(function (b) { return { name: f.name, data: b }; }); }))
-      .then(function (list) { return GTParse.convertFiles(JSZip, list, {}); })
-      .then(function (raw) {
-        drop.querySelector('h2').textContent = 'Перетащите сюда титры .gtzip';
-        if (!raw.titles.length) { toast('Титры не найдены. ' + raw.errors.join('; '), true); return; }
-        return prepare(raw);
-      })
-      .catch(function (e) { drop.querySelector('h2').textContent = 'Перетащите сюда титры .gtzip'; toast('Ошибка: ' + (e.message || e), true); console.error(e); });
+    srcName = files.length === 1 ? files[0].name.replace(/\.(gtzip|zip|json)$/i, '') : '';
+    var gt = files.filter(function (f) { return !/\.json$/i.test(f.name); }), lj = files.filter(function (f) { return /\.json$/i.test(f.name); });
+    Promise.all([
+      Promise.all(gt.map(function (f) { return f.arrayBuffer().then(function (b) { return { name: f.name, data: b }; }); })),
+      Promise.all(lj.map(function (f) { return f.text().then(function (t) { return { name: f.name, text: t }; }); }))
+    ]).then(function (r) {
+      return (r[0].length ? GTParse.convertFiles(JSZip, r[0], {}) : Promise.resolve(null)).then(function (raw) { return addLottie(raw, r[1]); });
+    }).then(function (raw) {
+      drop.querySelector('h2').textContent = DROP_H;
+      if (!raw.titles.length) { toast('Титры не найдены. ' + raw.errors.join('; '), true); return; }
+      return prepare(raw).then(function () { if (fonts.length) addFontFiles(fonts, null); });
+    }).catch(function (e) { drop.querySelector('h2').textContent = DROP_H; toast('Ошибка: ' + (e.message || e), true); console.error(e); });
+  }
+
+  /** Титры After Effects (Lottie .json) — в тот же сырой пакет, что и .gtzip */
+  function addLottie(raw, list) {
+    raw = raw || { format: GTParse.FORMAT, id: 'pkg-' + Date.now().toString(36), name: 'Пакет', created: new Date().toISOString(), w: 0, h: 0, fonts: [], titles: [], assets: {}, thumbs: {}, errors: [] };
+    list.forEach(function (it) {
+      var j;
+      try { j = JSON.parse(it.text); } catch (e) { raw.errors.push('«' + it.name + '»: не JSON'); return; }
+      try {
+        var r = GTLottie.analyze(j, it.name);
+        var t = r.title, base = GTParse.slug(t.id), id = base, k = 2;
+        while (raw.titles.some(function (x) { return x.id === id; })) id = base + '-' + (k++);
+        t.id = id;
+        raw.titles.push(t);
+        r.fonts.forEach(function (f) {
+          var e = raw.fonts.filter(function (x) { return x.family === f.family; })[0];
+          if (!e) raw.fonts.push(f); else f.variants.forEach(function (v) { if (e.variants.indexOf(v) < 0) e.variants.push(v); });
+        });
+      } catch (e) { raw.errors.push(String(e.message || e)); }
+    });
+    if (!raw.w && raw.titles[0]) { raw.w = raw.titles[0].w; raw.h = raw.titles[0].h; }
+    return raw;
+  }
+
+  /* ---------------- титры AE: рамки объектов и миниатюры ---------------- */
+  function lottieTitles() { return pkg ? pkg.titles.filter(function (t) { return t.kind === 'lottie'; }) : []; }
+  var measureBox = null;
+  function measureLottie() {
+    var list = lottieTitles();
+    if (!list.length || !window.lottie) return Promise.resolve();
+    return GTRender.loadFonts(publicPkg()).then(function () {
+      var chain = Promise.resolve();
+      list.forEach(function (t) { chain = chain.then(function () { return measureOne(t).catch(function (e) { console.warn(e); }); }); });
+      return chain;
+    });
+  }
+  function loadAnim(el, t, renderer) {
+    var a = JSON.parse(JSON.stringify(t.anim)); GTLottie.sanitize(a);
+    var an = lottie.loadAnimation({ container: el, renderer: renderer, loop: false, autoplay: false, animationData: a, rendererSettings: { preserveAspectRatio: 'xMidYMid meet' } });
+    return new Promise(function (res) {
+      var done = false, ok = function () { if (!done) { done = true; res(an); } };
+      if (an.isLoaded) ok(); an.addEventListener('DOMLoaded', ok); setTimeout(ok, 6000);
+    });
+  }
+  function measureOne(t) {
+    if (!measureBox) {
+      measureBox = document.createElement('div');
+      measureBox.style.cssText = 'position:fixed;left:-30000px;top:0;pointer-events:none;opacity:0';
+      document.body.appendChild(measureBox);
+    }
+    var box = document.createElement('div');
+    box.style.cssText = 'position:absolute;left:0;top:0;width:' + t.w + 'px;height:' + t.h + 'px';
+    measureBox.appendChild(box);
+    return loadAnim(box, t, 'svg').then(function (an) {
+      an.goToAndStop(t.mk.hold, true);
+      var B = box.getBoundingClientRect(), all = null, objs = [], els = an.renderer.elements;
+      var rectOf = function (e) {
+        var r = e.layerElement.getBoundingClientRect();
+        return { x1: r.left - B.left, y1: r.top - B.top, x2: r.right - B.left, y2: r.bottom - B.top };
+      };
+      els.forEach(function (e, i) {
+        if (!e || !e.data || e.data.td || !e.layerElement || e.data.hd) return;
+        var r = rectOf(e);
+        // слой с маской (track matte) виден только внутри неё
+        var m = e.data.tt && els[i - 1] && els[i - 1].layerElement ? rectOf(els[i - 1]) : null;
+        if (m) r = { x1: Math.max(r.x1, m.x1), y1: Math.max(r.y1, m.y1), x2: Math.min(r.x2, m.x2), y2: Math.min(r.y2, m.y2) };
+        r = { x1: Math.max(0, r.x1), y1: Math.max(0, r.y1), x2: Math.min(t.w, r.x2), y2: Math.min(t.h, r.y2) };
+        if (r.x2 - r.x1 < 1 || r.y2 - r.y1 < 1) return;
+        var o = { n: e.data.nm, t: e.data.ty === 5 ? 'text' : e.data.ty === 2 ? 'image' : 'shape', x: Math.round(r.x1), y: Math.round(r.y1), w: Math.round(r.x2 - r.x1), h: Math.round(r.y2 - r.y1) };
+        objs.push(o);
+        all = all ? { x1: Math.min(all.x1, r.x1), y1: Math.min(all.y1, r.y1), x2: Math.max(all.x2, r.x2), y2: Math.max(all.y2, r.y2) } : r;
+      });
+      var svg = box.querySelector('svg').cloneNode(true);
+      an.destroy(); box.remove();
+      t.objects = objs.filter(function (o) { return o.t === 'image' || o.t === 'text'; });
+      // картинка-поле — только логотип/эмблема: заметно меньше всего титра (фоны и плашки полями не делаем)
+      var area = all ? (all.x2 - all.x1) * (all.y2 - all.y1) : t.w * t.h;
+      t.fields = t.fields.filter(function (f) {
+        if (f.kind !== 'image') return true;
+        var o = objs.filter(function (x) { return x.n === f.o; })[0];
+        return o && o.w * o.h <= area * 0.2 && Math.min(o.w, o.h) >= 8;
+      });
+      if (all) t.box = { x: Math.round(all.x1), y: Math.round(all.y1), w: Math.round(all.x2 - all.x1), h: Math.round(all.y2 - all.y1) };
+      // рамка всего титра — для канала по умолчанию в пульте (верх экрана / низ / полноэкранный)
+      if (t.box) t.objects.unshift({ n: '__frame', t: 'rect', x: t.box.x, y: t.box.y, w: t.box.w, h: t.box.h });
+      return thumbOne(t, svg);
+    });
+  }
+  /** Миниатюра: тот же SVG на стоп-кадре (hold) со шрифтами пакета, обрезанный по рамке титра */
+  function thumbOne(t, svg) {
+    var css = (pkg.fontFiles || []).map(function (f) {
+      return '@font-face{font-family:"' + f.family + '";font-weight:' + (f.weight || 400) + ';font-style:' + (f.style || 'normal') + ';src:url(' + f.data + ')}';
+    }).join('');
+    var st = document.createElementNS('http://www.w3.org/2000/svg', 'style');
+    st.textContent = css;
+    svg.insertBefore(st, svg.firstChild);
+    svg.setAttribute('width', t.w); svg.setAttribute('height', t.h);
+    var xml = new XMLSerializer().serializeToString(svg);
+    var url = URL.createObjectURL(new Blob([xml], { type: 'image/svg+xml' }));
+    return loadImg(url).then(function (img) {
+      URL.revokeObjectURL(url);
+      var W = 384, H = Math.round(384 * t.h / t.w);
+      var bx = t.box || { x: 0, y: 0, w: t.w, h: t.h };
+      var m = Math.max(bx.w, bx.h) * 0.08;
+      var sx = Math.max(0, bx.x - m), sy = Math.max(0, bx.y - m), sw = Math.min(t.w - sx, bx.w + 2 * m), sh = Math.min(t.h - sy, bx.h + 2 * m);
+      var k = Math.min(W / sw, H / sh);
+      var c = document.createElement('canvas'); c.width = W; c.height = H;
+      var g = c.getContext('2d');
+      g.fillStyle = '#1b1b1b'; g.fillRect(0, 0, W, H);
+      g.imageSmoothingQuality = 'high';
+      g.drawImage(img, sx, sy, sw, sh, (W - sw * k) / 2, (H - sh * k) / 2, sw * k, sh * k);
+      var u = c.toDataURL('image/webp', 0.85);
+      if (!/^data:image\/webp/.test(u)) u = c.toDataURL('image/png');
+      pkg.thumbs[t.id] = u;
+    }).catch(function (e) { URL.revokeObjectURL(url); console.warn('миниатюра', e); });
   }
 
   /* ---------------- подготовка пакета ---------------- */
@@ -60,16 +181,18 @@
     fillTargets();
     sendPreview(true);
     sizeHint();
-    return Promise.all([shrinkThumbs(), embedGoogleFonts()]).then(function () { renderTitles(); renderFonts(); sizeHint(); sendPreview(false); });
+    return Promise.all([shrinkThumbs(), embedGoogleFonts()]).then(measureLottie).then(function () { renderTitles(); renderFonts(); sizeHint(); sendPreview(false); });
   }
 
   function renderTitles() {
     $('#titles').innerHTML = pkg.titles.map(function (t) {
       var dc = (t.sb.dc || []).length ? ' · реакция на смену данных' : '';
+      var info = t.kind === 'lottie'
+        ? 'After Effects · ' + t.fields.length + ' полей · ' + (t.anim.op - t.anim.ip) + ' кадр. @ ' + t.fr + ' fps · in ' + t.mk.in + ' / hold ' + t.mk.hold + (t.mk.out != null ? ' / out ' + t.mk.out : '')
+        : t.objects.length + ' объектов · ' + t.fields.length + ' полей · ' + (t.sb.in ? 'In' : 'без In') + ' / ' + (t.sb.out ? 'Out' : 'без Out') + dc;
       return '<div class="ti' + (t.id === selId ? ' sel' : '') + '" data-id="' + esc(t.id) + '">' +
         '<img src="' + (pkg.thumbs[t.id] || '') + '" alt="">' +
-        '<div class="m"><b>' + esc(t.name) + '</b><span>' + t.objects.length + ' объектов · ' + t.fields.length + ' полей · ' +
-        (t.sb.in ? 'In' : 'без In') + ' / ' + (t.sb.out ? 'Out' : 'без Out') + dc + '</span>' +
+        '<div class="m"><b>' + esc(t.name) + '</b><span>' + info + '</span>' +
         (t.warnings.length ? '<div class="w">⚠ ' + t.warnings.map(esc).join('<br>⚠ ') + '</div>' : '') + '</div></div>';
     }).join('');
   }
@@ -110,24 +233,36 @@
         '<span class="' + s.cls + '">' + s.txt + '</span><span style="flex:1"></span>' +
         (bundled.indexOf(f.family) < 0 ? '<label class="btn sm file">Файл шрифта…<input type="file" data-i="' + i + '" accept=".ttf,.otf,.woff,.woff2" multiple hidden></label>' : '') + '</div>';
     }).join('') || '<p class="hint">Текстов нет.</p>';
+    var missing = pkg.fonts.filter(function (x) { return bundled.indexOf(x.family) < 0 && !pkg.fontFiles.some(function (y) { return y.family === x.family; }); });
+    if (missing.length > 1) $('#fonts').innerHTML += '<div class="fontrow"><span class="hint">Один файл на все шрифты без файла (' + missing.length + ')</span><span style="flex:1"></span>' +
+      '<label class="btn sm file">Файл шрифта для всех…<input type="file" data-i="all" accept=".ttf,.otf,.woff,.woff2" hidden></label></div>';
   }
   $('#fonts').addEventListener('change', function (e) {
     var inp = e.target; if (!inp.files || !inp.files.length) return;
-    var f = pkg.fonts[+inp.dataset.i];
-    Promise.all([].slice.call(inp.files).map(function (file) {
+    addFontFiles([].slice.call(inp.files), inp.dataset.i === 'all' ? null : pkg.fonts[+inp.dataset.i]);
+    inp.value = '';
+  });
+  /** Файлы шрифтов: в указанное семейство или (f = null) во все семейства без файла */
+  function addFontFiles(files, f) {
+    var targets = f ? [f] : pkg.fonts.filter(function (x) { return bundled.indexOf(x.family) < 0 && !pkg.fontFiles.some(function (y) { return y.family === x.family; }); });
+    if (!targets.length) { toast('Все шрифты пакета уже на месте'); return; }
+    Promise.all(files.map(function (file) {
       return new Promise(function (res) {
         var rd = new FileReader();
         rd.onload = function () {
           var n = file.name.toLowerCase();
           var w = /thin/.test(n) ? 100 : /extralight|ultralight/.test(n) ? 200 : /light/.test(n) ? 300 : /medium/.test(n) ? 500 : /semibold|demibold/.test(n) ? 600 : /extrabold|ultrabold/.test(n) ? 800 : /black|heavy/.test(n) ? 900 : /bold/.test(n) ? 700 : 0;
-          var weights = w ? [w] : f.variants.map(function (v) { return parseInt(v, 10); }); // один файл без веса в имени — на все начертания
-          weights.forEach(function (wt) { pkg.fontFiles.push({ family: f.family, weight: wt, style: /italic|oblique/.test(n) ? 'italic' : 'normal', data: rd.result }); });
+          targets.forEach(function (tf) {
+            var weights = w && !tf.lottie ? [w] : tf.variants.map(function (v) { return parseInt(v, 10); }); // один файл без веса в имени — на все начертания
+            weights.forEach(function (wt) { pkg.fontFiles.push({ family: tf.family, weight: wt, style: /italic|oblique/.test(n) && !tf.lottie ? 'italic' : 'normal', data: rd.result }); });
+          });
           res();
         };
         rd.readAsDataURL(file);
       });
-    })).then(function () { pkg.ver = Date.now().toString(36); renderFonts(); sizeHint(); sendPreview(true); });
-  });
+    })).then(function () { pkg.ver = Date.now().toString(36); renderFonts(); sizeHint(); return measureLottie(); })
+      .then(function () { renderTitles(); sendPreview(true); });
+  }
 
   function embedGoogleFonts() {
     var jobs = pkg.fonts.filter(function (f) { return bundled.indexOf(f.family) < 0; }).map(function (f) {
