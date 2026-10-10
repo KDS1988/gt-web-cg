@@ -246,6 +246,19 @@
 
   LottieTitle.prototype._applyData = function (force) {
     var self = this, now = R.now(), any = false;
+    // общая подгонка шрифта группы полей (f.fitGroup): у всех один размер — по самому длинному тексту
+    var gfit = {};
+    (this.def.fields || []).forEach(function (f) {
+      if (!f.fitGroup || f.kind !== 'text' || !f.maxW) return;
+      var e = self._el(f), doc = e && e.textProperty && e.textProperty.data && e.textProperty.data.d && e.textProperty.data.d.k[0] && e.textProperty.data.d.k[0].s;
+      if (!doc) return;
+      if (doc._s0 == null) doc._s0 = doc.s;
+      var fm = self.anim.renderer.globalData && self.anim.renderer.globalData.fontManager;
+      var fo = fm && fm.getFontByName ? fm.getFontByName(doc.f) : null;
+      var w = textWidth(R.textOf(self.data[f.k], now).replace(/\n/g, '\r'), (fo && fo.fFamily) || doc.f, doc._s0, doc.tr);
+      var k = w > f.maxW ? f.maxW / w : 1;
+      gfit[f.fitGroup] = Math.min(gfit[f.fitGroup] == null ? 1 : gfit[f.fitGroup], k);
+    });
     (this.def.fields || []).forEach(function (f) {
       var v = self.data[f.k];
       if (f.kind === 'text') {
@@ -254,15 +267,15 @@
           var a = parseFloat(String(s).replace(',', '.')), b = parseFloat(String(R.textOf(self.data[f.cmp], now)).replace(',', '.'));
           fc = (isFinite(a) && isFinite(b) && a > b) ? f.hiC : f.loC;
         }
-        sig = fc ? s + '|' + fc.join(',') : s;
+        sig = (fc ? s + '|' + fc.join(',') : s) + (f.fitGroup && gfit[f.fitGroup] != null ? '|g' + gfit[f.fitGroup] : '');
         if (!force && self['t:' + f.k] === sig) return;
-        if (self['t:' + f.k] === undefined && s === f.def && !fc && !force) { self['t:' + f.k] = s; return; }
+        if (self['t:' + f.k] === undefined && s === f.def && !fc && !f.fitGroup && !force) { self['t:' + f.k] = s; return; }
         var main = self._el(f);
         if (!main || !main.textProperty) return;
         // сам слой + его копии в масках (подготовка T → Alpha Matte кладёт туда тексты)
         var list = [main].concat(self._all(f).filter(function (x) { return x !== main && (x.data.t && x.data.t.d && JSON.stringify(x.data.t.d.k[0].s.t) === JSON.stringify(f.def)); }));
         if (!self['tl:' + f.k]) self['tl:' + f.k] = list;
-        var fit = null; // подгонка длинного текста под ширину места в макете (f.maxW): шрифт меньше
+        var fit = f.fitGroup && gfit[f.fitGroup] != null ? gfit[f.fitGroup] : null; // подгонка длинного текста под ширину места в макете (f.maxW): шрифт меньше
         self['tl:' + f.k].forEach(function (e) {
           if (!e.textProperty) return;
           var keys = (e.textProperty.data && e.textProperty.data.d && e.textProperty.data.d.k) || [];
@@ -306,8 +319,8 @@
     });
     // правила скрытия слоёв по значению поля: def.hide = [{layers:[имя слоя…], field:'Поле.Text', re:'^ПОСЛЕ'}]
     (this.def.hide || []).forEach(function (h, i) {
-      var val = R.textOf(self.data[h.field], now), off = false;
-      try { off = new RegExp(h.re, 'i').test(String(val)); } catch (e) {}
+      var off = false; // fields — все поля должны подходить под re
+      try { var re = new RegExp(h.re, 'i'); off = (h.fields || [h.field]).every(function (k) { return re.test(String(R.textOf(self.data[k], now))); }); } catch (e) {}
       if (!force && self['h:' + i] === off) return;
       self['h:' + i] = off;
       (function walk(list) {

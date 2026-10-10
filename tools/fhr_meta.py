@@ -249,12 +249,18 @@ for n in range(1, 6):
     setf(t, 'Фамилия %d.Text' % n, bind='ln.%d.last' % n, maxW=126, sec=sec)
 for f in t['fields']:
     f.setdefault('sec', 'Подписи')
+# пустые места в звене (неполное звено) не показываются; подпись — если пуста вся группа
+EMPTY = r'^\s*$'
+t['hide'] = [{'layers': ['Подложка %d' % n, 'Полоса %d' % n, 'Номер %d' % n, 'Имя %d' % n, 'Фамилия %d' % n],
+              'fields': ['Фамилия %d.Text' % n, 'Номер %d.Text' % n], 're': EMPTY} for n in range(1, 6)]
+t['hide'] += [{'layers': ['Подложка подписи 1', 'Подпись защитники'], 'fields': ['Фамилия 1.Text', 'Фамилия 2.Text'], 're': EMPTY},
+              {'layers': ['Подложка подписи 2', 'Подпись нападающие'], 'fields': ['Фамилия %d.Text' % n for n in (3, 4, 5)], 're': EMPTY}]
 
 # ---------------- судьи матча (из протокола)
 t = T['23-sudi']
 t['ch'] = '2'
 for n in range(1, 5):
-    setf(t, 'Судья %d.Text' % n, bind='ref.%d' % n, maxW=320)
+    setf(t, 'Судья %d.Text' % n, bind='ref.%d' % n, maxW=320, fitGroup='refs')  # у всех судей один размер шрифта
     setf(t, 'Роль судьи %d.Text' % n, presets=['ГЛАВНЫЙ СУДЬЯ', 'ЛИНЕЙНЫЙ СУДЬЯ'])
 
 T['02-shtorka']['ch'] = '6'

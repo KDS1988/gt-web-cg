@@ -198,12 +198,34 @@
     var t = linesTitle(); if (!t) return C.toast('В пакете нет титра звена', true);
     var D = C.D(); D.feed = D.feed || {};
     var cur = D.feed[t.id] || {}, onAir = C.airChanOf(t.id);
-    if (take && onAir && cur.side === side && String(cur.unit) === String(unit)) { C.out(onAir); return; }
+    if (take && onAir && cur.side === side && String(cur.unit) === String(unit)) { stopCycle(); C.out(onAir); return; }
     var r = lineValues(side, unit); if (r.err) return C.toast('Звено: ' + r.err, true);
     D.feed[t.id] = { side: side, unit: String(unit) }; C.saveData();
     applyBinds(r.v, !!onAir);
-    if (take) C.take(t.id);
+    if (take) { if (onAir) startCycle(side, unit); else C.take(t.id); } // в эфир — beforeTake запустит пролистывание
     if (D.sel === t.id) C.renderEditor();
+  }
+  /** Пролистывание звеньев в эфире: каждые LINE_MS следующее звено, после последнего — титр уходит */
+  var LINE_MS = 5000, cyc = null;
+  function stopCycle() { if (cyc) clearTimeout(cyc.timer); cyc = null; }
+  function startCycle(side, unit) {
+    stopCycle();
+    var us = unitsOf(side), i = Math.max(0, us.indexOf(String(unit)));
+    var me = cyc = { side: side, units: us, i: i };
+    var tick = function () {
+      if (cyc !== me) return;
+      var t = linesTitle(), ch = t && C.airChanOf(t.id);
+      if (!ch) { stopCycle(); return; }
+      me.i++;
+      if (me.i >= me.units.length) { stopCycle(); C.out(ch); return; }
+      var r = lineValues(side, me.units[me.i]);
+      if (r.err) { stopCycle(); C.out(ch); return; }
+      var D = C.D(); D.feed = D.feed || {}; D.feed[t.id] = { side: side, unit: me.units[me.i] }; C.saveData();
+      applyBinds(r.v, true);
+      if (D.sel === t.id) C.renderEditor();
+      me.timer = setTimeout(tick, LINE_MS);
+    };
+    me.timer = setTimeout(tick, LINE_MS);
   }
 
   /** Записать значения по привязкам во все титры; instant — сразу в эфир */
@@ -395,6 +417,13 @@
     }
     var mv = matchValues(m, opt);
     var vals = Object.assign({}, mv.v, standingsValues(m.group), scorersValues('all', 0));
+    // звено: логотип хозяев и первое звено (если заявка уже есть)
+    var lt = linesTitle();
+    if (lt) {
+      var lr = lineValues('home', unitsOf('home')[0]);
+      Object.assign(vals, lr.err ? { 'ln.logo': logoOf(team(m.home.id)) } : lr.v);
+      D.feed = D.feed || {}; D.feed[lt.id] = { side: 'home', unit: unitsOf('home')[0] };
+    }
     D.feed = D.feed || {};
     C.pkg().titles.forEach(function (t) { if (t.feed === 'standings') D.feed[t.id] = m.group; if (t.feed === 'scorers') D.feed[t.id] = { scope: 'all', from: 0 }; });
     C.saveData();
@@ -605,6 +634,13 @@
   }
   H.beforeTake = function (tid) {
     var t = C.titleById(tid); if (!t) return;
+    if (t.feed === 'lines') { // звено: данные текущего звена (логотип — всегда) и пролистывание до последнего
+      var D = C.D(), f = (D.feed || {})[t.id] || { side: 'home', unit: unitsOf('home')[0] };
+      var r = lineValues(f.side, f.unit), M = curMatch();
+      if (!r.err) applyBinds(r.v, false);
+      else if (M) applyBinds({ 'ln.logo': logoOf(team(M[f.side].id)) }, false);
+      if (!r.err) startCycle(f.side, f.unit); else stopCycle();
+    }
     penaltyFields(t).forEach(function (f) {
       var v = C.getVal(t.id, f), now = CG.clock.now(), tm;
       if (C.isTimer(v)) tm = Object.assign({}, v.tm);
