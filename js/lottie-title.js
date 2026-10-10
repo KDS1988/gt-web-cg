@@ -320,13 +320,13 @@
     // правила скрытия слоёв по значению поля: def.hide = [{layers:[имя слоя…], field:'Поле.Text', re:'^ПОСЛЕ'}]
     (this.def.hide || []).forEach(function (h, i) {
       var off = false; // fields — все поля должны подходить под re
-      try { var re = new RegExp(h.re, 'i'); off = (h.fields || [h.field]).every(function (k) { return re.test(String(R.textOf(self.data[k], now))); }); } catch (e) {}
+      try { var re = new RegExp(h.re, 'i'); off = (h.fields || [h.field]).every(function (k) { return re.test(String(R.textOf(self.data[k], now))); }); if (h.not) off = !off; } catch (e) {}
       if (!force && self['h:' + i] === off) return;
       self['h:' + i] = off;
       (function walk(list) {
         (list || []).forEach(function (e) {
           if (!e || !e.data) return;
-          if (h.layers.indexOf(e.data.nm) >= 0 && e.layerElement) e.layerElement.style.display = off ? 'none' : '';
+          if (h.layers.indexOf(e.data.nm) >= 0 && e.layerElement) e.layerElement.style.visibility = off ? 'hidden' : ''; // display трогает сам lottie (ip/op)
           if (e.elements) walk(e.elements);
         });
       })(self.anim && self.anim.renderer && self.anim.renderer.elements);

@@ -249,12 +249,19 @@ for n in range(1, 6):
     setf(t, 'Фамилия %d.Text' % n, bind='ln.%d.last' % n, maxW=126, sec=sec)
 for f in t['fields']:
     f.setdefault('sec', 'Подписи')
-# пустые места в звене (неполное звено) не показываются; подпись — если пуста вся группа
+# пустые места в звене (неполное звено) не показываются; подпись — вариант под фактическую схему звена
 EMPTY = r'^\s*$'
 t['hide'] = [{'layers': ['Подложка %d' % n, 'Полоса %d' % n, 'Номер %d' % n, 'Имя %d' % n, 'Фамилия %d' % n],
               'fields': ['Фамилия %d.Text' % n, 'Номер %d.Text' % n], 're': EMPTY} for n in range(1, 6)]
-t['hide'] += [{'layers': ['Подложка подписи 1', 'Подпись защитники'], 'fields': ['Фамилия 1.Text', 'Фамилия 2.Text'], 're': EMPTY},
-              {'layers': ['Подложка подписи 2', 'Подпись нападающие'], 'fields': ['Фамилия %d.Text' % n for n in (3, 4, 5)], 're': EMPTY}]
+for k in (1, 2):
+    t['hide'].append({'layers': ['Подложка подписи D%d' % k, 'Подпись D%d' % k], 'field': 'Схема.Text', 're': '^D%d' % k, 'not': True})
+for st in (1, 2, 3):
+    for n in (1, 2, 3):
+        if st + n - 1 <= 5:
+            t['hide'].append({'layers': ['Подложка подписи F%d-%d' % (st, n), 'Подпись F%d-%d' % (st, n)],
+                              'field': 'Схема.Text', 're': '^D%dF%d$' % (st - 1, n), 'not': True})
+t['fields'] = [f for f in t['fields'] if not f['k'].startswith('Подпись ')]  # подписи — постоянный текст
+setf(t, 'Схема.Text', bind='ln.scheme', sec='Подписи', label='Схема звена (D защитников, F нападающих)')
 
 # ---------------- судьи матча (из протокола)
 t = T['23-sudi']

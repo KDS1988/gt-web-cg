@@ -179,8 +179,11 @@
     var pl = lineupSort(g[side].players).filter(function (p) { return String(p.unit) === String(unit); });
     var d = pl.filter(function (p) { return p.pos === 'D'; }), f = pl.filter(function (p) { return p.pos === 'F'; });
     if (!d.length && !f.length) return { err: 'в заявке нет ' + unit + '-го звена' };
-    var five = [d[0], d[1], f[0], f[1], f[2]], v = { 'ln.logo': logoOf(team(m[side].id)) };
-    five.forEach(function (p, i) {
+    d = d.slice(0, 2); f = f.slice(0, 3);
+    // места заполняются подряд: защитники, затем нападающие; схема выбирает подписи под ними
+    var five = d.concat(f), v = { 'ln.logo': logoOf(team(m[side].id)), 'ln.scheme': 'D' + d.length + 'F' + f.length };
+    [0, 1, 2, 3, 4].forEach(function (i) {
+      var p = five[i];
       v['ln.' + (i + 1) + '.num'] = p ? p.num : '';
       v['ln.' + (i + 1) + '.first'] = p ? up(p.first) : '';
       v['ln.' + (i + 1) + '.last'] = p ? up(p.last) : '';
