@@ -8,6 +8,8 @@
  *
  * Результат: <папка>/<турнир>.json и логотипы <папка>/logos/<id команды>.webp
  *   { updated, tournament, groups[], matches[], standings{group:[]}, scorers{group|all:[]}, teams{id:{…, players[], staff[]}}, codes{id:'ДИН'} }
+ * и страницы матчей <папка>/games/<id>.json — заявка на матч (со звеньями, ОВ/ЗВ, К/А) и судьи:
+ *   { id, updated, refs:{main:[{last,first}], line:[…]}, home:{players:[{num,last,first,pos,unit,cap}]}, away:{…} }
  *
  * Сайт отдаёт страницы целиком (Bitrix) и куски через /fhr-ajax/… — их и разбираем.
  * Запускается GitHub Action по расписанию (облако) и server.js по кнопке в пульте (локально).
@@ -190,6 +192,61 @@ function parseScorers(json) {
   });
 }
 
+
+/* ---------------- страница матча: заявка и судьи ---------------- */
+const tt = (el) => clean(el ? (el.textContent != null ? el.textContent : el.text) : '');
+const cap1 = (w) => w ? w.charAt(0).toUpperCase() + w.slice(1) : w;
+const POS_HEAD = { 'вратари': 'G', 'защитники': 'D', 'нападающие': 'F', 'персонал': 'S' };
+/** doc — разобранная страница /games/<id>/ (node-html-parser или DOM браузера) */
+function parseGame(doc) {
+  const refs = { main: [], line: [] };
+  doc.querySelectorAll('.added-info .info-row').forEach((r) => {
+    const k = tt(r.querySelector('.main-text')).toLowerCase();
+    const list = tt(r.querySelector('.text')).split(',').map((x) => clean(x)).filter(Boolean)
+      .map((x) => { const n = splitName(x.toLowerCase().split(' ').map(cap1).join(' ')); return { last: n.last, first: n.first }; });
+    if (/главн/.test(k)) refs.main = list; else if (/линейн/.test(k)) refs.line = list;
+  });
+  const out = { refs, home: { players: [], staff: [] }, away: { players: [], staff: [] } };
+  doc.querySelectorAll('.team-lineups .team-block').forEach((b) => {
+    const side = /right-team/.test(b.getAttribute('class') || '') ? 'away' : 'home';
+    let pos = '';
+    b.querySelectorAll('thead, tbody').forEach((sec) => {
+      if (/^thead$/i.test(sec.tagName)) { const h = sec.querySelector('.pos-name .text') || sec.querySelector('th'); pos = POS_HEAD[tt(h).toLowerCase().split(' ')[0]] || ''; return; }
+      sec.querySelectorAll('tr').forEach((tr) => {
+        const p = tr.querySelector('.player'); if (!p) return;
+        const td = tr.querySelectorAll('td');
+        const c = td[1] ? tt(td[1]).toUpperCase() : '';
+        const n = splitName(tt(p.querySelector('.text')));
+        if (pos === 'S') { out[side].staff.push({ role: tt(td[td.length - 1]), last: n.last, first: n.first }); return; }
+        if (!pos) return;
+        out[side].players.push({ num: tt(p.querySelector('.number')), last: n.last, first: n.first, pos, unit: tt(p.querySelector('.unit')).toUpperCase(), cap: /^[КАK]$/.test(c) ? c : '' });
+      });
+    });
+  });
+  return out;
+}
+async function syncGame(id, outDir) {
+  const dir = path.join(outDir, 'games');
+  fs.mkdirSync(dir, { recursive: true });
+  const g = Object.assign({ id: String(id), updated: new Date().toISOString() }, parseGame(parse(await get('/games/' + id + '/'))));
+  const f = path.join(dir, id + '.json');
+  const strip = (o) => JSON.stringify(Object.assign({}, o, { updated: '' }));
+  let prev = null; try { prev = JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) {}
+  if (!prev || strip(prev) !== strip(g)) fs.writeFileSync(f, JSON.stringify(g)); else g.updated = prev.updated;
+  return g;
+}
+/** Какие матчи обновлять: ближайшие (−2…+3 дня) всегда, прошедшие — один раз */
+function gamesToSync(matches, outDir, now) {
+  now = now || new Date();
+  const day = (m) => { const p = String(m.date || '').split('.'); return p.length === 3 ? new Date(+p[2], +p[1] - 1, +p[0]) : null; };
+  return matches.filter((m) => {
+    const d = day(m); if (!m.id || !d) return false;
+    const diff = (d - now) / 864e5;
+    if (diff >= -2 && diff <= 3) return true;
+    return diff < 0 && diff > -150 && !fs.existsSync(path.join(outDir, 'games', m.id + '.json'));
+  }).map((m) => m.id);
+}
+
 /* ---------------- главная ---------------- */
 async function sync(tslug, outDir, log) {
   log = log || ((...a) => console.log(...a));
@@ -246,6 +303,12 @@ async function sync(tslug, outDir, log) {
     teams[id] = rec;
   }
   matches.sort((a, b) => (a.n || 0) - (b.n || 0));
+  // страницы матчей: заявки со звеньями и судьи
+  const gids = gamesToSync(matches, outDir);
+  for (let i = 0; i < gids.length; i += 4) {
+    await Promise.all(gids.slice(i, i + 4).map((id) => syncGame(id, outDir).catch((e) => log('  матч', id, e.message))));
+  }
+  if (gids.length) log('страниц матчей:', gids.length);
   const out = {
     source: SITE + base, updated: new Date().toISOString(), tournament: { slug: tslug, title: meta.title, season: meta.season, id: g0.tid, year: g0.year },
     groups: meta.groups.map((g) => ({ id: g.id, name: g.name })), matches, standings, scorers, teams, codes
@@ -265,7 +328,7 @@ function mergeIndex(f, item) {
   l = l.filter((x) => x.slug !== item.slug); l.push(item); return l;
 }
 
-module.exports = { sync, parseCalendar, parseStandings, parseTeam, parseGroups, parseCodes, parseScorers, ajaxUrl, phpParams };
+module.exports = { sync, syncGame, parseGame, gamesToSync, parseCalendar, parseStandings, parseTeam, parseGroups, parseCodes, parseScorers, ajaxUrl, phpParams };
 if (require.main === module) {
   sync(process.argv[2], process.argv[3]).catch((e) => { console.error('ОШИБКА:', e.message); process.exit(1); });
 }
