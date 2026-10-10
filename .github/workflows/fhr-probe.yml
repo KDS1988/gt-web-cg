@@ -1,0 +1,9 @@
+name: fhr-probe
+on: workflow_dispatch
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -sS -m 30 -o cal.html -w "status %{http_code} size %{size_download} time %{time_total}\n" -A "Mozilla/5.0" https://junior.fhr.ru/tournaments/kubokrossii-25008909/calendar/ || echo FAIL
+          grep -o '/games/[0-9]*' cal.html | sort -u | wc -l
