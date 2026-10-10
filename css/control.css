@@ -191,3 +191,33 @@ table.stat td,table.stat th{padding:6px}
 .tact select{max-width:220px}
 .pills{gap:4px 6px;align-content:center;overflow:hidden;max-height:56px}
 .pill{padding:2px 8px;font-size:10.5px}
+
+/* панель матча под мониторами: хозяева слева, гости справа */
+.game{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+.game[hidden]{display:none}
+.gside{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:8px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.gside.home{border-top:3px solid #2a82f5}.gside.away{border-top:3px solid var(--red)}
+.ghead{display:flex;align-items:center;gap:8px;min-width:0}
+.ghead b{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ghead .gscore{font:900 20px/1 Montserrat,sans-serif;color:#fff;margin-left:auto;padding:2px 8px;border-radius:6px;background:#081124;border:1px solid var(--line)}
+.ghead .gstat{font-size:11px;color:var(--mute);font-weight:700;white-space:nowrap}
+.grow{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px}
+.gst{display:flex;gap:4px;min-width:0}
+.gst .gbig{flex:1;min-width:0}
+.gbig{padding:10px 6px;font-size:13px}
+.gundo{opacity:.6}.gundo:hover{opacity:1}
+.gbig.goal{background:#0b3a1f;border-color:#1f6b3a}.gbig.goal:hover{background:#13602f}
+.gbig.pen{background:#3a0f16;border-color:#7a2030}.gbig.pen:hover{background:#6d1f2b}
+.gform{display:flex;flex-direction:column;gap:8px;padding:8px;border:1px solid var(--line);border-radius:8px;background:#0c1630}
+.gform[hidden]{display:none}
+.gform .g2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.gform .row{display:flex;align-items:center;gap:8px;margin:0}
+.glog{font-size:11.5px;color:var(--mute);display:flex;flex-direction:column;gap:2px}
+.glog b{color:#ffe7b3}
+/* с панелью матча каналы эфира — компактной строкой (только занятые) */
+.gamepanel .onair{display:flex;flex-wrap:wrap;gap:4px}
+.gamepanel .chrow{min-height:0;padding:2px 2px 2px 8px;border:1px solid #6d1f2b;border-radius:14px;background:#1a0a10;font-size:11.5px;gap:6px}
+.gamepanel .chrow.empty{display:none}
+.gamepanel .chrow span.n{width:auto;font-size:10px}
+.gamepanel .chrow b{max-width:180px}
+.gamepanel .chrow .btn.out{padding:1px 7px;font-size:11px;border-radius:12px}

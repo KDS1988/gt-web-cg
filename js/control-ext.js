@@ -306,7 +306,13 @@
     if (opt.homeAbbr && opt.homeAbbr !== codeOf(m.home)) X[m.home.id] = opt.homeAbbr;
     if (opt.awayAbbr && opt.awayAbbr !== codeOf(m.away)) X[m.away.id] = opt.awayAbbr;
     C.saveCfg();
+    var fresh = !D.match || D.match.id !== m.id;
     D.match = Object.assign({ id: m.id, slug: FHR.slug, group: m.group }, opt);
+    if (fresh) { // новый матч — статистика с нуля, журнал событий пустой
+      D.events = [];
+      var stt = statTitle();
+      if (stt) stt.statRows.forEach(function (r) { [r.f1, r.f2].forEach(function (k) { C.setVal(stt.id, fieldOf(stt, k), '0'); }); });
+    }
     var mv = matchValues(m, opt);
     var vals = Object.assign({}, mv.v, standingsValues(m.group), scorersValues('all', 0));
     D.feed = D.feed || {};
@@ -322,6 +328,7 @@
     var m = curMatch();
     p.className = 'pill' + (m ? ' ok' : '');
     p.textContent = m ? 'МАТЧ №' + m.n + ': ' + (m.home.name + ' — ' + m.away.name).toUpperCase() : 'МАТЧ: —';
+    renderGame();
   }
 
   /* коды команд списком */
@@ -425,6 +432,9 @@
       var lab = C.getVal(st.id, fieldOf(st, r.label));
       out.push({ id: 'stat:' + r.key + ':1', name: 'Статистика: ' + lab + ' хозяев +1' }, { id: 'stat:' + r.key + ':2', name: 'Статистика: ' + lab + ' гостей +1' });
     });
+    if (st) [['shot', 'Бросок'], ['sog', 'Бросок в створ'], ['fo', 'Вбрасывание']].forEach(function (x) {
+      out.push({ id: 'ev:' + x[0] + ':1', name: 'Панель: ' + x[1] + ' хозяев' }, { id: 'ev:' + x[0] + ':2', name: 'Панель: ' + x[1] + ' гостей' });
+    });
     (pkg ? pkg.titles : []).forEach(function (t) { out.push({ id: 't:' + t.id, name: 'IN / OUT: ' + t.name }); });
     return out;
   }
@@ -461,6 +471,7 @@
     else if (a === 'clock') toggleClock();
     else if (/^score[12][+-]$/.test(a)) bumpScore(a[5], a[6] === '+' ? 1 : -1);
     else if (/^stat:/.test(a)) { var p = a.split(':'); statAdd(p[1], p[2], 1); }
+    else if (/^ev:/.test(a)) { var q = a.split(':'); gameStat(q[1], q[2] === '1' ? 'home' : 'away', 1); }
     else if (/^t:/.test(a)) C.toggle(a.slice(2));
   }
   function groupTitleField(g) {
@@ -550,6 +561,171 @@
     if (changed.length) C.pushLive(changed);
   }, 200);
 
+
+  /* =================================================================== */
+  /* Панель матча под мониторами: статистика и события по командам      */
+  /* =================================================================== */
+  var PEN_TYPES = ['ПОДНОЖКА', 'ЗАДЕРЖКА', 'ЗАДЕРЖКА КЛЮШКОЙ', 'ЗАДЕРЖКА КЛЮШКИ СОПЕРНИКА', 'УДАР КЛЮШКОЙ', 'ТОЛЧОК КЛЮШКОЙ', 'ОТСЕЧЕНИЕ',
+    'БЛОКИРОВКА', 'ГРУБОСТЬ', 'ТОЛЧОК НА БОРТ', 'АТАКА В ГОЛОВУ И ШЕЮ', 'УДАР ЛОКТЕМ', 'УДАР КОЛЕНОМ', 'ИГРА ВЫСОКО ПОДНЯТОЙ КЛЮШКОЙ',
+    'КОЛЮЩИЙ УДАР', 'УДАР КОНЦОМ КЛЮШКИ', 'АТАКА ВРАТАРЯ', 'СДВИГ ВОРОТ', 'ЗАДЕРЖКА ИГРЫ', 'ВЫБРОС ШАЙБЫ', 'НАРУШЕНИЕ ЧИСЛЕННОГО СОСТАВА',
+    'ИГРА РУКОЙ', 'НЕСПОРТИВНОЕ ПОВЕДЕНИЕ', 'ДРАКА', 'СИМУЛЯЦИЯ', 'ПРЕРЫВАНИЕ ИГРЫ'];
+  var SIDE_N = { home: 1, away: 2 };
+  function sideTitle(side, test) {
+    var p = C.pkg(); if (!p) return null;
+    return p.titles.filter(function (t) { return t.side === side && test(t); })[0] || null;
+  }
+  function golTitle(side) { return sideTitle(side, function (t) { return !!fieldOf(t, 'Имя Игрока.Text') && !!fieldOf(t, 'Ассистент 1.Text'); }); }
+  function penTitle(side) { return sideTitle(side, function (t) { return penaltyFields(t).length > 0; }); }
+  function playerTitle(side) { return sideTitle(side, function (t) { return !!fieldOf(t, 'Имя игрока.Text') && !!fieldOf(t, 'Роль игрока.Text'); }); }
+  function setF(t, k, v, touched) {
+    var f = t && fieldOf(t, k); if (!f) return;
+    C.setVal(t.id, f, v);
+    if (touched.indexOf(t.id) < 0) touched.push(t.id);
+  }
+  function statVal(key, n) {
+    var t = statTitle(); if (!t) return '';
+    var r = t.statRows.filter(function (x) { return x.key === key; })[0]; if (!r) return '';
+    return C.getVal(t.id, fieldOf(t, n == 1 ? r.f1 : r.f2));
+  }
+  function scoreVal(n) {
+    var g = C.autoGroup(n == 1 ? 'HomeScore' : 'AwayScore'), x = g && groupTitleField(g);
+    return x ? String(C.getVal(x.t.id, x.f)) : '';
+  }
+  function players(side) { return H.pickList(side + '.players') || []; }
+  function gameOn() { var p = C && C.pkg(); return !!(p && p.features && p.features.match === 'fhr'); }
+  function logEvent(side, txt) {
+    var D = C.D(); D.events = D.events || [];
+    var clk = H.presetValue('clock') || '';
+    D.events.push({ side: side, t: clk, txt: txt, at: Date.now() });
+    if (D.events.length > 200) D.events = D.events.slice(-200);
+    C.saveData();
+  }
+  function plOptions(side, empty) {
+    var l = players(side);
+    if (!l.length) return '<option value="">— нет состава: выберите матч —</option>';
+    return (empty ? '<option value="">' + empty + '</option>' : '') + l.map(function (it, i) { return '<option value="' + i + '">' + esc(it.label) + '</option>'; }).join('');
+  }
+  function renderGame() {
+    var box = $('#game'); if (!box) return;
+    var on = gameOn();
+    box.hidden = !on; document.body.classList.toggle('gamepanel', on);
+    if (!on) return;
+    var M = curMatch();
+    box.innerHTML = ['home', 'away'].map(function (side) {
+      var n = SIDE_N[side], tm = M && team(M[side] && M[side].id);
+      var name = tm ? up(tm.name) : (side === 'home' ? 'ХОЗЯЕВА' : 'ГОСТИ');
+      var st = function (ev, lab, title) {
+        var hk = H.hotkeyOf('ev:' + ev + ':' + n);
+        return '<div class="gst"><button class="btn gbig" data-ev="' + ev + '" data-side="' + side + '" title="' + esc(title) + '">' + lab +
+          (hk ? ' <span class="hk">' + esc(hk) + '</span>' : '') + '</button><button class="btn sm gundo" data-undo="' + ev + '" data-side="' + side + '" title="Отменить: −1">−1</button></div>';
+      };
+      return '<div class="gside ' + side + '" data-side="' + side + '">' +
+        '<div class="ghead">' + (tm && logoOf(tm) ? '<img class="mini" src="' + esc(logoOf(tm)) + '">' : '') +
+        '<b>' + esc(name) + '</b><span class="gscore" data-gs="' + n + '"></span><span class="gstat" data-gstat="' + n + '"></span></div>' +
+        '<div class="grow">' + st('shot', 'БРОСОК', 'Броски +1') + st('sog', 'В СТВОР', 'Броски +1 и броски в створ +1') + st('fo', 'ВБРАСЫВАНИЕ', 'Выигранные вбрасывания +1') + '</div>' +
+        '<div class="grow">' +
+        '<button class="btn gbig goal" data-open="goal" data-side="' + side + '">🚨 ГОЛ</button>' +
+        '<button class="btn gbig pen" data-open="pen" data-side="' + side + '">⛔ УДАЛЕНИЕ</button></div>' +
+        '<div class="gform" data-form="goal" data-side="' + side + '" hidden>' +
+        '<label>Автор гола<select data-g="author">' + plOptions(side) + '</select></label>' +
+        '<div class="g2"><label>Ассистент 1<select data-g="a1">' + plOptions(side, '— нет —') + '</select></label>' +
+        '<label>Ассистент 2<select data-g="a2">' + plOptions(side, '— нет —') + '</select></label></div>' +
+        '<div class="row"><label class="tog"><input type="checkbox" data-g="score" checked> счёт +1</label><span style="flex:1"></span>' +
+        '<button class="btn" data-close="goal">Отмена</button><button class="btn take" data-do="goal" data-side="' + side + '">ГОЛ ▶ В ЭФИР</button></div></div>' +
+        '<div class="gform" data-form="pen" data-side="' + side + '" hidden>' +
+        '<label>Игрок<select data-g="pl">' + plOptions(side) + '<option value="team">КОМАНДНЫЙ ШТРАФ</option></select></label>' +
+        '<div class="g2"><label>Время<select data-g="min"><option value="2">2:00</option><option value="4">4:00</option><option value="5">5:00</option></select></label>' +
+        '<label>Нарушение<select data-g="type">' + PEN_TYPES.map(function (x) { return '<option>' + esc(x) + '</option>'; }).join('') + '</select></label></div>' +
+        '<div class="row"><span class="hint" style="margin:0;flex:1">Таймер — в «доп. инфу», штраф +2/+4/+5 — в статистику</span>' +
+        '<button class="btn" data-close="pen">Отмена</button><button class="btn take" data-do="pen" data-side="' + side + '">УДАЛЕНИЕ ▶ В ЭФИР</button></div></div>' +
+        '<div class="glog" data-glog="' + side + '"></div>' +
+        '</div>';
+    }).join('');
+    updateGame();
+  }
+  function updateGame() {
+    if (!gameOn() || $('#game').hidden) return;
+    [1, 2].forEach(function (n) {
+      var s = $('[data-gs="' + n + '"]'); if (s) s.textContent = scoreVal(n);
+      var g = $('[data-gstat="' + n + '"]');
+      if (g) g.textContent = 'Б ' + (statVal('shots', n) || 0) + ' · СТВ ' + (statVal('sog', n) || 0) + ' · ВБР ' + (statVal('fo', n) || 0) + ' · ШТР ' + (statVal('pim', n) || 0);
+    });
+    var ev = C.D().events || [];
+    ['home', 'away'].forEach(function (side) {
+      var b = $('[data-glog="' + side + '"]'); if (!b) return;
+      var h = ev.filter(function (e) { return e.side === side; }).slice(-3).reverse().map(function (e) {
+        return '<div>' + (e.t ? '<b>' + esc(e.t) + '</b> ' : '') + esc(e.txt) + '</div>';
+      }).join('');
+      if (b.innerHTML !== h) b.innerHTML = h;
+    });
+  }
+  function gameStat(ev, side, d) {
+    var n = SIDE_N[side];
+    if (ev === 'shot') statAdd('shots', n, d);
+    else if (ev === 'sog') { statAdd('shots', n, d); statAdd('sog', n, d); }
+    else if (ev === 'fo') statAdd('fo', n, d);
+    updateGame();
+  }
+  function doGoal(side) {
+    var form = $('.gform[data-form=goal][data-side=' + side + ']'), l = players(side), t = golTitle(side);
+    if (!t) return C.toast('В пакете нет титра автора гола', true);
+    var g = function (k) { return form.querySelector('[data-g=' + k + ']'); };
+    var au = l[+g('author').value], a1 = l[+g('a1').value], a2 = l[+g('a2').value];
+    if (g('a1').value === '') a1 = null; if (g('a2').value === '') a2 = null;
+    if (!au) return C.toast('Выберите автора гола', true);
+    var touched = [];
+    setF(t, 'Номер игрока.Text', H.pickFormat(au, 'num'), touched);
+    setF(t, 'Имя Игрока.Text', H.pickFormat(au, 'name'), touched);
+    setF(t, 'Ассистент 1.Text', a1 ? H.pickFormat(a1, 'name num') : '', touched);
+    setF(t, 'Ассистент 2.Text', a2 ? H.pickFormat(a2, 'name num') : '', touched);
+    var clk = H.presetValue('clock'); if (clk) setF(t, 'Время доп..Text', clk, touched);
+    if (g('score').checked) bumpScore(String(SIDE_N[side]), 1);
+    C.pushLive(touched);
+    C.take(t.id);
+    logEvent(side, 'ГОЛ: №' + H.pickFormat(au, 'num name') + (a1 || a2 ? ' (' + [a1, a2].filter(Boolean).map(function (x) { return H.pickFormat(x, 'name'); }).join(', ') + ')' : ''));
+    form.hidden = true;
+    if (C.D().sel === t.id) C.renderEditor();
+    C.updatePreview(false); updateGame();
+  }
+  function doPenalty(side) {
+    var form = $('.gform[data-form=pen][data-side=' + side + ']'), l = players(side), t = penTitle(side);
+    if (!t) return C.toast('В пакете нет титра удаления', true);
+    var g = function (k) { return form.querySelector('[data-g=' + k + ']'); };
+    var min = +g('min').value || 2, type = g('type').value, pv = g('pl').value, pl = pv === 'team' ? null : l[+pv];
+    var touched = [];
+    penaltyFields(t).forEach(function (f) { C.setVal(t.id, f, '0' + min + ':00'); });
+    touched.push(t.id);
+    statAdd('pim', SIDE_N[side], min);
+    // игрок и нарушение — в титр игрока этой команды (выдать в эфир можно из списка)
+    var pt = playerTitle(side), who = pl ? '№' + H.pickFormat(pl, 'num name') : 'КОМАНДНЫЙ ШТРАФ';
+    if (pt && pl) {
+      setF(pt, 'Номер.Text', H.pickFormat(pl, 'num'), touched);
+      setF(pt, 'Имя игрока.Text', H.pickFormat(pl, 'name'), touched);
+      setF(pt, 'Роль игрока.Text', 'УДАЛЕНИЕ ' + min + ' МИН · ' + type, touched);
+    }
+    C.pushLive(touched);
+    C.take(t.id);
+    logEvent(side, 'УДАЛЕНИЕ ' + min + ' МИН: ' + who + ' — ' + type.toLowerCase());
+    form.hidden = true;
+    if (touched.indexOf(C.D().sel) >= 0) C.renderEditor();
+    C.updatePreview(false); updateGame();
+  }
+  function gameClick(e) {
+    var b = e.target.closest('button'); if (!b) return;
+    var side = b.dataset.side || (b.closest('.gside') && b.closest('.gside').dataset.side);
+    if (b.dataset.ev) gameStat(b.dataset.ev, side, 1);
+    else if (b.dataset.undo) gameStat(b.dataset.undo, side, -1);
+    else if (b.dataset.open) {
+      var f = $('.gform[data-form=' + b.dataset.open + '][data-side=' + side + ']'), was = f.hidden;
+      document.querySelectorAll('.gside[data-side=' + side + '] .gform').forEach(function (x) { x.hidden = true; });
+      f.hidden = !was;
+    }
+    else if (b.dataset.close) b.closest('.gform').hidden = true;
+    else if (b.dataset.do === 'goal') doGoal(side);
+    else if (b.dataset.do === 'pen') doPenalty(side);
+  }
+  setInterval(function () { if (C && C.pkg()) updateGame(); }, 500);
+
   /* =================================================================== */
   /* Разметка окон и запуск                                              */
   /* =================================================================== */
@@ -583,6 +759,9 @@
     kh.innerHTML = '<h3>Горячие клавиши</h3><p class="hint">Нажмите кнопку и затем клавишу или сочетание. Работают, когда курсор не в поле ввода (сочетания с Ctrl/Alt/Cmd и F1–F12 — всегда). Хранятся в этом браузере.</p>' +
       '<div class="wrapdata" style="max-height:300px"><table class="data"><tbody id="kList"></tbody></table></div><div class="row"><button class="btn danger sm" id="kReset">Сбросить все клавиши</button></div>';
     sd.insertBefore(kh, anchor);
+    var gp = document.createElement('div'); gp.className = 'game'; gp.id = 'game'; gp.hidden = true;
+    var mons = $('.monitors'); mons.parentNode.insertBefore(gp, mons.nextSibling);
+    gp.addEventListener('click', gameClick);
 
     $('#btnMatch').addEventListener('click', openMatch);
     $('#btnStats').addEventListener('click', openStats);
@@ -622,6 +801,7 @@
 
   H.pkgOpened = function (p) {
     matchPill();
+    renderGame();
     if (!(p.features && p.features.match === 'fhr')) { $('#btnMatch').hidden = true; $('#btnStats').hidden = !statTitle(); $('#pMatch').hidden = true; return; }
     $('#btnMatch').hidden = false; $('#btnStats').hidden = false; $('#pMatch').hidden = false;
     var D = C.D(), slug = (D.match && D.match.slug) || 'kubokrossii-25008909';

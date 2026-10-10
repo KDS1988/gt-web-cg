@@ -249,9 +249,14 @@
     (this.def.fields || []).forEach(function (f) {
       var v = self.data[f.k];
       if (f.kind === 'text') {
-        var s = R.textOf(v, now);
-        if (!force && self['t:' + f.k] === s) return;
-        if (self['t:' + f.k] === undefined && s === f.def && !force) { self['t:' + f.k] = s; return; }
+        var s = R.textOf(v, now), fc = null, sig;
+        if (f.cmp) { // цвет по сравнению с другим полем: больше — hiC, иначе loC
+          var a = parseFloat(String(s).replace(',', '.')), b = parseFloat(String(R.textOf(self.data[f.cmp], now)).replace(',', '.'));
+          fc = (isFinite(a) && isFinite(b) && a > b) ? f.hiC : f.loC;
+        }
+        sig = fc ? s + '|' + fc.join(',') : s;
+        if (!force && self['t:' + f.k] === sig) return;
+        if (self['t:' + f.k] === undefined && s === f.def && !fc && !force) { self['t:' + f.k] = s; return; }
         var main = self._el(f);
         if (!main || !main.textProperty) return;
         // сам слой + его копии в масках (подготовка T → Alpha Matte кладёт туда тексты)
@@ -263,6 +268,7 @@
           var keys = (e.textProperty.data && e.textProperty.data.d && e.textProperty.data.d.k) || [];
           for (var i = 0; i < Math.max(1, keys.length); i++) {
             var doc = keys[i] && keys[i].s, upd = { t: s.replace(/\n/g, '\r') };
+            if (fc) upd.fc = fc;
             if (doc && f.maxW) {
               if (doc._s0 == null) doc._s0 = doc.s;
               if (fit == null) {
@@ -276,7 +282,7 @@
             e.updateDocumentData(upd, i);
           }
         });
-        self['t:' + f.k] = s;
+        self['t:' + f.k] = sig;
         any = true;
       } else if (f.kind === 'image') {
         var src = v ? self.assetUrl(v) : '';

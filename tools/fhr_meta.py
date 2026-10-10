@@ -55,7 +55,7 @@ for t in P['titles']:
     t.pop('side', None)
 
 # ---------------- табло и титры с табло
-for tid in ('03-tablo', '06-gol-hoz', '07-gol-gost', '09-bullity'):
+for tid in ('03-tablo', '09-bullity'):
     t = T[tid]
     for side, n in SIDES:
         setf(t, 'Команда %d.Text' % n, bind=side + '.abbr', maxLen=5, maxW=104, label='Код команды %d' % n)
@@ -78,8 +78,8 @@ for tid, side, n, ch in (('04-udalenie-hoz', 'home', 1, '4'), ('05-udalenie-gost
 for tid, side in (('06-gol-hoz', 'home'), ('07-gol-gost', 'away')):
     t = T[tid]
     t['side'] = side
-    t['ch'] = '3'
-    setf(t, 'Команда доп..Text', bind=side + '.name', maxW=150, label='Команда')
+    t['ch'] = '7'  # своя плашка рядом с табло — над табло и удалениями
+    setf(t, 'Логотип.Source', bind=side + '.logo', label='Логотип команды')
     setf(t, 'Имя Игрока.Text', label='Автор гола', maxW=260,
          pick={'list': side + '.players', 'set': {'Номер игрока.Text': 'num', 'Имя Игрока.Text': 'name'}})
     for a in (1, 2):
@@ -147,11 +147,14 @@ for tid, side in (('12-sostav-hoz', 'home'), ('13-sostav-gost', 'away')):
 t = T['14-statistika']
 t['statRows'] = []
 for side, n in SIDES:
-    setf(t, 'Команда %d.Text' % n, bind=side + '.abbr', maxW=280)
+    setf(t, 'Команда %d.Text' % n, bind=side + '.name', maxW=290)
+RED, DARK = [0.855, 0.161, 0.11], [0.247, 0.247, 0.243]
 for key, lab in (('shots', 'Броски'), ('sog', 'Броски в створ'), ('fo', 'Вбрасывания'), ('pim', 'Штраф')):
     setf(t, lab + '.Text', sec='Подписи')
     for side, n in SIDES:
-        setf(t, '%s %d.Text' % (lab, n), bind='stat.%s.%d' % (key, n), sec='Значения')
+        # цвет: красный — у большего значения в строке, остальные тёмные (cmp — с чем сравнивать)
+        setf(t, '%s %d.Text' % (lab, n), bind='stat.%s.%d' % (key, n), sec='Значения',
+             cmp='%s %d.Text' % (lab, 3 - n), hiC=RED, loC=DARK)
     t['statRows'].append({'key': key, 'label': lab + '.Text', 'f1': lab + ' 1.Text', 'f2': lab + ' 2.Text'})
 setf(t, 'Заголовок.Text', bind='stat.title', maxW=1050,
      presets=['СТАТИСТИКА МАТЧА ПОСЛЕ 1 ПЕРИОДА', 'СТАТИСТИКА МАТЧА ПОСЛЕ 2 ПЕРИОДА', 'СТАТИСТИКА МАТЧА ПОСЛЕ 3 ПЕРИОДА', 'СТАТИСТИКА МАТЧА'])
@@ -231,6 +234,6 @@ for tid in ('20-tablica', '21-bombardiry'):
     t['fields'].sort(key=rk)
 
 T['02-shtorka']['ch'] = '6'
-P['features'] = {'match': 'fhr', 'channels': 6}
+P['features'] = {'match': 'fhr', 'channels': 7}
 json.dump(P, open(sys.argv[2], 'w', encoding='utf-8'), ensure_ascii=False, separators=(',', ':'))
 print('ok', len(P['titles']), 'титров')

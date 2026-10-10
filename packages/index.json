@@ -1,1 +1,13 @@
-[{"id": "hokkey-fhm", "name": "Хоккей ФХМ (пример из .gtzip)", "file": "packages/hokkey-fhm.json"}, {"id": "fhr-kubok-rossii", "name": "ФХР · Кубок России (After Effects)", "file": "packages/fhr-kubok-rossii.json", "ver": "v2-6aca4b51"}]
+[
+ {
+  "id": "hokkey-fhm",
+  "name": "Хоккей ФХМ (пример из .gtzip)",
+  "file": "packages/hokkey-fhm.json"
+ },
+ {
+  "id": "fhr-kubok-rossii",
+  "name": "ФХР · Кубок России (After Effects)",
+  "file": "packages/fhr-kubok-rossii.json",
+  "ver": "v3-6aca5e7e"
+ }
+]
