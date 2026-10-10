@@ -605,6 +605,16 @@
 
   function openPkg(id) {
     return CG.Library.get(id).then(function (p) {
+      // в репозитории есть более новая версия этого пакета — обновить копию в браузере (данные полей сохраняются)
+      var r = p && repoPkgs.filter(function (x) { return x.id === p.id && x.ver; })[0];
+      if (r && r.ver !== p.ver) {
+        return CG.fetchPkg(r.file).then(function (np) {
+          if (!np || np.ver !== r.ver) return p;
+          return CG.Library.put(np).then(function () { toast('Пакет «' + np.name + '» обновлён из репозитория'); return np; });
+        }).catch(function () { return p; });
+      }
+      return p;
+    }).then(function (p) {
       if (!p) { toast('Пакет не найден в браузере', true); return; }
       if (pkg && pkg.id !== id && Object.keys(air).length) { air = {}; send(); }
       pkg = p;
