@@ -5,6 +5,7 @@
  *  - синхронизирует пульт и графику: POST /api/state → SSE /api/events
  *  - хранит опубликованный пакет графики: PUT/GET /api/pkg
  *  - помнит последнее состояние: графика после перезагрузки восстанавливается
+ *  - обновляет данные турнира с junior.fhr.ru по кнопке в пульте: POST /api/fhr-sync?t=<турнир>
  *
  * Запуск:  node server.js            (порт 8787; 8088 занят vMix)
  *          PORT=9000 node server.js
@@ -116,6 +117,20 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': MIME['.json'] });
       return res.end('{"ok":true}');
     } catch (e) { res.writeHead(400); return res.end(String(e.message || e)); }
+  }
+
+  // ---------- данные турнира с junior.fhr.ru (кнопка «Обновить с сайта» в окне «Матч») ----------
+  if (p === '/api/fhr-sync' && req.method === 'POST') {
+    const slug = (url.searchParams.get('t') || 'kubokrossii-25008909').replace(/[^a-z0-9_-]/gi, '');
+    try {
+      const out = await require('./tools/fhr-sync.js').sync(slug, path.join(ROOT, 'data', 'fhr'), () => {});
+      console.log('  Данные ФХР обновлены: ' + out.matches.length + ' матчей, ' + Object.keys(out.teams).length + ' команд');
+      res.writeHead(200, { 'Content-Type': MIME['.json'] });
+      return res.end(JSON.stringify({ ok: true, matches: out.matches.length, updated: out.updated }));
+    } catch (e) {
+      res.writeHead(502, { 'Content-Type': MIME['.json'] });
+      return res.end(JSON.stringify({ ok: false, error: 'junior.fhr.ru: ' + (e.message || e) }));
+    }
   }
 
   // ---------- статика ----------

@@ -9,6 +9,9 @@
   var same = function (a, b) { return a === b || JSON.stringify(a) === JSON.stringify(b); };
   var qs = new URLSearchParams(location.search);
   var CHANNELS = ['1', '2', '3', '4'];
+  // точки расширения (окно матча, статистика, шорткаты, удаления — js/control-ext.js)
+  var H = window.__gtcHooks = window.__gtcHooks || {};
+  function hook(name) { var f = H[name]; return typeof f === 'function' ? f.apply(null, [].slice.call(arguments, 1)) : undefined; }
 
   /* =================================================================== */
   /* Настройки                                                           */
@@ -65,11 +68,11 @@
   function buildFieldIdx() {
     fieldIdx = {};
     var byK = {};
-    pkg.titles.forEach(function (t) { t.fields.forEach(function (f) { (byK[f.k] = byK[f.k] || []).push(f.def); }); });
+    pkg.titles.forEach(function (t) { t.fields.forEach(function (f) { if (!f.bind && !f.grp) (byK[f.k] = byK[f.k] || []).push(f.def); }); });
     pkg.titles.forEach(function (t) {
       t.fields.forEach(function (f) {
-        var d = byK[f.k], allSame = d.every(function (v) { return same(v, d[0]); });
-        f.g = allSame ? f.k : f.k + '#' + JSON.stringify(f.def);
+        var d = byK[f.k] || [f.def], allSame = d.every(function (v) { return same(v, d[0]); });
+        f.g = f.bind ? 'bind:' + f.bind : f.grp ? 'grp:' + f.grp : allSame ? f.k : f.k + '#' + JSON.stringify(f.def);
         var x = fieldIdx[f.g] = fieldIdx[f.g] || { titles: [], defs: [] };
         x.titles.push(t.id); x.defs.push(f.def);
       });
@@ -114,7 +117,8 @@
       var r = { x1: x1, y1: y1, x2: x2, y2: y2 };
       var area = Math.max(0, Math.min(x2, W) - Math.max(x1, 0)) * Math.max(0, Math.min(y2, H) - Math.max(y1, 0)) / (W * H);
       var stinger = t.kind === 'lottie' && !t.fields.length && t.mk && t.mk.out == null && (t.mk.op - t.mk.ip) / (t.fr || 25) <= 3 && area > 0.5;
-      if (stinger) map[t.id] = '4';
+      if (t.ch) map[t.id] = String(t.ch);
+      else if (stinger) map[t.id] = CHANNELS[CHANNELS.length - 1];
       else if (area > (t.kind === 'lottie' ? 0.35 : 0.5)) map[t.id] = '1';
       else if (y2 < H * 0.3) {
         if (!top3.length || top3.some(function (b) { return overlap(b, r); })) { map[t.id] = '3'; top3.push(r); }
@@ -147,6 +151,7 @@
     var c = chanOf(tid);
     var was = airChanOf(tid);
     if (was && was !== c) delete air[was];
+    hook('beforeTake', tid);
     air[c] = { t: tid, take: ++takeNo, data: dataFor(tid) };
     send();
   }
@@ -196,15 +201,20 @@
   function renderList() {
     var L = $('#list');
     if (!pkg) { L.innerHTML = ''; return; }
-    L.innerHTML = '<div class="grp"><h4>Титры <span class="st">' + pkg.titles.length + '</span></h4>' +
-      pkg.titles.map(function (t) {
+    D.hidden = D.hidden || {};
+    var nHid = pkg.titles.filter(function (t) { return D.hidden[t.id]; }).length;
+    L.innerHTML = '<div class="grp"><h4>Титры <span class="st">' + (pkg.titles.length - nHid) + (nHid ? ' + ' + nHid + ' скрыто' : '') + '</span>' +
+      (nHid ? '<button class="ibtn' + (D.showHidden ? ' on' : '') + '" id="lShowHidden" title="Показать скрытые титры">👁</button>' : '') + '</h4>' +
+      pkg.titles.filter(function (t) { return !D.hidden[t.id] || D.showHidden || airChanOf(t.id); }).map(function (t) {
         var th = pkg.thumbs && pkg.thumbs[t.id];
-        return '<div class="item" data-id="' + esc(t.id) + '">' +
+        return '<div class="item' + (D.hidden[t.id] ? ' hid' : '') + '" data-id="' + esc(t.id) + '">' +
           (th ? '<img class="th" src="' + th + '" alt="">' : '<div class="th"></div>') +
           '<div class="meta"><div class="nm" title="' + esc(t.name) + '">' + esc(t.name) + '</div>' +
           '<div class="sub"><select class="chs" title="Канал (слой) — как оверлей vMix">' + CHANNELS.map(function (c) { return '<option' + (chanOf(t.id) === c ? ' selected' : '') + '>' + c + '</option>'; }).join('') + '</select>' +
-          '<span>' + t.fields.length + ' пол.</span><span class="air-dot">● ЭФИР</span></div></div>' +
-          '<button class="btn">IN</button></div>';
+          '<span>' + t.fields.length + ' пол.</span><span class="air-dot">● ЭФИР</span>' +
+          '<button class="ibtn hide" data-hide title="' + (D.hidden[t.id] ? 'Вернуть в список' : 'Скрыть из списка') + '">' + (D.hidden[t.id] ? '↩' : '✕') + '</button>' +
+          (hook('hotkeyOf', 't:' + t.id) ? '<span class="hk">' + esc(hook('hotkeyOf', 't:' + t.id)) + '</span>' : '') + '</div></div>' +
+          '<button class="btn" data-io>IN</button></div>';
       }).join('') + '</div>';
     markList();
   }
@@ -213,13 +223,15 @@
       var id = el.dataset.id, c = airChanOf(id);
       el.classList.toggle('sel', id === D.sel);
       el.classList.toggle('air', !!c);
-      $('.btn', el).textContent = c ? 'OUT' : 'IN';
+      $('[data-io]', el).textContent = c ? 'OUT' : 'IN';
     });
   }
   $('#list').addEventListener('click', function (e) {
+    if (e.target.id === 'lShowHidden') { D.showHidden = !D.showHidden; saveData(); renderList(); return; }
     var it = e.target.closest('.item'); if (!it) return;
     if (e.target.closest('select')) return;
-    if (e.target.closest('.btn')) { toggle(it.dataset.id); return; }
+    if (e.target.closest('[data-hide]')) { var id = it.dataset.id; D.hidden = D.hidden || {}; if (D.hidden[id]) delete D.hidden[id]; else D.hidden[id] = 1; saveData(); renderList(); return; }
+    if (e.target.closest('[data-io]')) { toggle(it.dataset.id); return; }
     select(it.dataset.id);
   });
   $('#list').addEventListener('change', function (e) {
@@ -316,18 +328,23 @@
     }
     var t = titleById(D.sel);
     if (!t) { E.innerHTML = '<div class="empty-state">Выберите титр слева</div>'; return; }
-    var groups = { text: [], image: [], color: [], visible: [] };
-    t.fields.forEach(function (f) { (groups[f.kind] || groups.text).push(f); });
+    var groups = { text: [], image: [], color: [], visible: [] }, bySec = null;
+    if (t.fields.some(function (f) { return f.sec; })) {
+      // разделы из метаданных пакета (Вратари / Защитники / Нападающие …), по порядку полей
+      bySec = {}; groups = {};
+      t.fields.forEach(function (f) { var sname = f.sec || 'Прочее'; if (!bySec[sname]) { bySec[sname] = 1; groups[sname] = []; } groups[sname].push(f); });
+    } else t.fields.forEach(function (f) { (groups[f.kind] || groups.text).push(f); });
     var h = '<h3>' + esc(t.name) + ' <small>' + esc(t.file || '') + ' · ' + t.fields.length + ' полей</small></h3>' +
       '<div class="edbar" id="edbar"><button class="btn big take" id="edTake"></button>' +
       '<button class="btn big" id="edPush" title="Отправить правки в эфир">⟳ ОБНОВИТЬ В ЭФИРЕ</button>' +
       '<label class="tog" title="Каждая правка сразу уходит в эфир (если титр в эфире)"><input type="checkbox" id="edLive"' + (D.live ? ' checked' : '') + '> правки сразу в эфир</label>' +
       '<span class="sp"></span><span class="hint">🔗 — поле общее для всех титров с таким же полем · ± и таймеры идут в эфир сразу</span></div>';
+    h += hook('editorTop', t) || '';
     if (!t.fields.length) h += '<p class="hint">В этом титре нет редактируемых полей — только IN/OUT.</p>';
     Object.keys(groups).forEach(function (kind) {
       var list = groups[kind];
       if (!list.length) return;
-      h += '<div class="fsec">' + KIND_TITLE[kind] + ' <small>' + list.length + '</small></div><div class="fields">';
+      h += '<div class="fsec">' + esc(bySec ? kind : KIND_TITLE[kind]) + ' <small>' + list.length + '</small></div><div class="fields' + (bySec && list.some(function (f) { return f.narrow; }) ? ' pairs' : '') + '">';
       list.forEach(function (f) { h += fieldHtml(t, f); });
       h += '</div>';
     });
@@ -353,11 +370,11 @@
           '<select data-act="tfmt" title="Формат">' + [['mm:ss', 'мм:сс'], ['m:ss', 'м:сс'], ['auto', 'м:сс → сс.д'], ['mm.ss', 'мм.сс'], ['auto.', 'м.сс → сс.д'], ['hh:mm:ss', 'чч:мм:сс']].map(function (o) { return '<option value="' + o[0] + '"' + (tm.fmt === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>' +
           '<button class="ibtn on" data-act="timer" title="Выключить таймер (оставить текст)">⏱</button></div>';
       } else {
-        var sv = String(v == null ? '' : v);
-        body = '<div class="fr">' + (isInt(sv) ? '<button class="btn pm" data-act="dec" title="−1 (сразу в эфир)">−</button>' : '') +
-          '<input type="text" data-act="text" value="' + esc(sv) + '" spellcheck="false">' +
-          (isInt(sv) ? '<button class="btn pm" data-act="inc" title="+1 (сразу в эфир)">+</button>' : '') +
-          '<button class="ibtn' + (looksTime(sv) ? '' : '') + '" data-act="timer" title="Сделать полем-таймером">⏱</button></div>';
+        var sv = String(v == null ? '' : v), pm = isInt(sv) && !f.narrow;
+        body = '<div class="fr">' + (pm ? '<button class="btn pm" data-act="dec" title="−1 (сразу в эфир)">−</button>' : '') +
+          '<input type="text" data-act="text" value="' + esc(sv) + '" spellcheck="false"' + (f.maxLen ? ' maxlength="' + f.maxLen + '"' : '') + '>' +
+          (pm ? '<button class="btn pm" data-act="inc" title="+1 (сразу в эфир)">+</button>' : '') +
+          (f.narrow ? '' : '<button class="ibtn" data-act="timer" title="Сделать полем-таймером">⏱</button>') + '</div>';
       }
     } else if (f.kind === 'image') {
       var assets = assetList(), isAsset = pkg.assets && pkg.assets[v];
@@ -372,7 +389,24 @@
     } else if (f.kind === 'visible') {
       body = '<label class="tog"><input type="checkbox" data-act="vis"' + (v === false || v === 'false' ? '' : ' checked') + '> показывать</label>';
     }
-    return '<div class="fld' + (chg ? ' chg' : '') + '" data-k="' + esc(f.k) + '">' + head + body + '</div>';
+    if (f.pick) body = pickHtml(f) + body;
+    if (f.presets && f.presets.length) body += '<div class="presets">' + f.presets.map(function (p) {
+      var pv = presetValue(p); return pv === '' ? '' : '<button class="btn sm" data-act="preset" data-v="' + esc(pv) + '">' + esc(pv) + '</button>';
+    }).join('') + '</div>';
+    return '<div class="fld' + (chg ? ' chg' : '') + (f.narrow ? ' narrow' : '') + '" data-k="' + esc(f.k) + '">' + head + body + '</div>';
+  }
+  /** Значение кнопки-заготовки: «$home.abbr» — из данных матча, «$clock» — текущее время табло */
+  function presetValue(p) {
+    if (typeof p !== 'string' || p[0] !== '$') return p;
+    var r = hook('presetValue', p.slice(1));
+    return r == null ? '' : String(r);
+  }
+  /** Выбор игрока/тренера из состава команды (данные матча) */
+  function pickHtml(f) {
+    var list = hook('pickList', f.pick.list) || [];
+    if (!list.length) return '';
+    return '<select class="pick" data-act="pick" title="Выбрать из состава"><option value="">— из состава —</option>' +
+      list.map(function (p, i) { return '<option value="' + i + '">' + esc(p.label) + '</option>'; }).join('') + '</select>';
   }
   function toHex(c) {
     c = String(c || '').trim();
@@ -412,6 +446,12 @@
       D.link[f.g] = on; saveData(); renderEditor(); updatePreview(false); return;
     }
     if (act === 'def') { change(t, f, f.def, false, true); return; }
+    if (act === 'preset') {
+      var pv = b.dataset.v;
+      if (isTimer(v)) { var ms0 = parseTime(pv); if (ms0 != null) change(t, f, { tm: Object.assign({}, v.tm, { ms: ms0, ms0: ms0, run: false, at: 0 }) }, true, true); }
+      else change(t, f, pv, !!D.live, true);
+      return;
+    }
     if (act === 'inc' || act === 'dec') {
       var s = String(v), n = parseInt(s, 10) + (act === 'inc' ? 1 : -1);
       if (n < 0) n = 0;
@@ -452,6 +492,15 @@
     var x = fieldOf(e.target); if (!x) return;
     var act = e.target.dataset.act, t = x.t, f = x.f, v = getVal(t.id, f);
     if (act === 'vis') change(t, f, e.target.checked, false, false);
+    else if (act === 'pick') {
+      var list = hook('pickList', f.pick.list) || [], it = list[+e.target.value]; if (!it) return;
+      Object.keys(f.pick.set).forEach(function (k) {
+        var ff = t.fields.filter(function (x) { return x.k === k; })[0]; if (!ff) return;
+        setVal(t.id, ff, hook('pickFormat', it, f.pick.set[k]) || '');
+      });
+      if (D.live) pushLive(null); else renderEdBar();
+      updatePreview(false); renderEditor();
+    }
     else if (act === 'imgsel') change(t, f, e.target.value, false, true);
     else if (act === 'tfmt' && isTimer(v)) change(t, f, { tm: Object.assign({}, v.tm, { fmt: e.target.value }) }, true, false);
     else if (act === 'imgfile' && e.target.files[0]) {
@@ -510,9 +559,10 @@
   /* =================================================================== */
   var lastEsc = 0;
   document.addEventListener('keydown', function (e) {
-    if (!$('#settings').hidden) { if (e.key === 'Escape') $('#settings').hidden = true; return; }
-    if (!$('#extDlg').hidden) { if (e.key === 'Escape') $('#extDlg').hidden = true; return; }
     var inField = /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName);
+    if (hook('keydown', e, inField)) { e.preventDefault(); return; } // горячие клавиши (и их назначение в ⚙)
+    var openDlg = document.querySelector('.modal:not([hidden])');
+    if (openDlg) { if (e.key === 'Escape') openDlg.hidden = true; return; }
     if (e.key === 'Escape') {
       if (inField) { document.activeElement.blur(); return; }
       var now = Date.now(); if (now - lastEsc < 600) clearAll(); lastEsc = now; return;
@@ -560,12 +610,16 @@
       pkg = p;
       cfg.pkgId = p.id; saveCfg();
       loadData();
+      CHANNELS = ['1', '2', '3', '4'];
+      var nch = Math.max(4, Math.min(8, (pkg.features && pkg.features.channels) || 4));
+      for (var c = 5; c <= nch; c++) CHANNELS.push(String(c));
       buildFieldIdx();
       defCh = defaultChannels();
       if (!titleById(D.sel)) D.sel = pkg.titles[0] && pkg.titles[0].id;
       $('#pkgName').textContent = pkg.name + ' · ' + pkg.titles.length + ' титр.';
       document.title = 'Пульт · ' + pkg.name;
       renderList(); renderAir(); renderEditor(); updatePreview(true);
+      hook('pkgOpened', pkg);
       return CG.Library.list().then(fillPkgSel).then(function () { return publish(false); });
     });
   }
@@ -808,6 +862,16 @@
     (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(function () { toast('Скопировано'); }).catch(function () { toast(t); });
   });
   window.__gtExt = applyExt; // для отладки и тестов
+
+  /* Внутренний API пульта для js/control-ext.js */
+  window.__gtc = {
+    pkg: function () { return pkg; }, D: function () { return D; }, cfg: cfg, saveCfg: saveCfg, saveData: saveData,
+    titleById: titleById, getVal: getVal, setVal: setVal, dataFor: dataFor, fieldIdx: function () { return fieldIdx; },
+    pushLive: pushLive, take: take, out: out, toggle: toggle, clearAll: clearAll, airChanOf: airChanOf, air: function () { return air; },
+    renderEditor: renderEditor, renderList: renderList, renderEdBar: renderEdBar, updatePreview: updatePreview, select: select,
+    toast: toast, esc: esc, isTimer: isTimer, parseTime: parseTime, fmtLike: fmtLike, autoGroup: autoGroup, padLike: padLike,
+    bus: function () { return bus; }, channels: function () { return CHANNELS; }, same: same
+  };
 
   /* =================================================================== */
   /* Старт                                                               */

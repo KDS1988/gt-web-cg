@@ -141,7 +141,7 @@
   if (!R) return;
   var animStr = typeof WeakMap !== 'undefined' ? new WeakMap() : null;
 
-  function cloneAnim(def) {
+  function cloneAnim(def, pkgAssets) {
     var s = animStr && animStr.get(def);
     if (!s) {
       var a = JSON.parse(JSON.stringify(def.anim));
@@ -149,7 +149,26 @@
       s = JSON.stringify(a);
       if (animStr) animStr.set(def, s);
     }
-    return JSON.parse(s);
+    var out = JSON.parse(s);
+    // картинки вынесены в общий словарь пакета (одинаковые хранятся один раз): "asset:<id>"
+    (out.assets || []).forEach(function (a) {
+      if (typeof a.p === 'string' && a.p.indexOf('asset:') === 0) {
+        var x = pkgAssets && pkgAssets[a.p.slice(6)];
+        a.p = x ? x.data : '';
+        a.u = ''; a.e = 1;
+      }
+    });
+    return out;
+  }
+
+  /** Ширина строки текста слоя (для подгонки под maxW) */
+  var measCtx = null;
+  function textWidth(str, family, size, tr) {
+    if (!measCtx) measCtx = document.createElement('canvas').getContext('2d');
+    measCtx.font = size + 'px "' + family + '"';
+    var w = 0;
+    String(str).split(/\r|\n/).forEach(function (line) { w = Math.max(w, measCtx.measureText(line).width + (tr || 0) / 1000 * size * Math.max(0, line.length - 1)); });
+    return w;
   }
 
   function LottieTitle(stage, def, data, z) {
@@ -172,7 +191,7 @@
     if (z != null) this.el.style.zIndex = String(z);
     stage.el.appendChild(this.el);
     this.anim = root.lottie.loadAnimation({
-      container: this.el, renderer: 'svg', loop: false, autoplay: false, animationData: cloneAnim(def),
+      container: this.el, renderer: 'svg', loop: false, autoplay: false, animationData: cloneAnim(def, stage.pkg && stage.pkg.assets),
       rendererSettings: { preserveAspectRatio: 'xMidYMid meet', progressiveLoad: false, hideOnTransparent: true }
     });
     this.loaded = new Promise(function (res) {
@@ -238,10 +257,24 @@
         // сам слой + его копии в масках (подготовка T → Alpha Matte кладёт туда тексты)
         var list = [main].concat(self._all(f).filter(function (x) { return x !== main && (x.data.t && x.data.t.d && JSON.stringify(x.data.t.d.k[0].s.t) === JSON.stringify(f.def)); }));
         if (!self['tl:' + f.k]) self['tl:' + f.k] = list;
+        var fit = null; // подгонка длинного текста под ширину места в макете (f.maxW): шрифт меньше
         self['tl:' + f.k].forEach(function (e) {
           if (!e.textProperty) return;
           var keys = (e.textProperty.data && e.textProperty.data.d && e.textProperty.data.d.k) || [];
-          for (var i = 0; i < Math.max(1, keys.length); i++) e.updateDocumentData({ t: s.replace(/\n/g, '\r') }, i);
+          for (var i = 0; i < Math.max(1, keys.length); i++) {
+            var doc = keys[i] && keys[i].s, upd = { t: s.replace(/\n/g, '\r') };
+            if (doc && f.maxW) {
+              if (doc._s0 == null) doc._s0 = doc.s;
+              if (fit == null) {
+                var fm = self.anim.renderer.globalData && self.anim.renderer.globalData.fontManager;
+                var fo = fm && fm.getFontByName ? fm.getFontByName(doc.f) : null;
+                var w = textWidth(upd.t, (fo && fo.fFamily) || doc.f, doc._s0, doc.tr);
+                fit = w > f.maxW ? f.maxW / w : 1;
+              }
+              upd.s = Math.round(doc._s0 * fit * 10) / 10;
+            }
+            e.updateDocumentData(upd, i);
+          }
         });
         self['t:' + f.k] = s;
         any = true;
