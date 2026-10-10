@@ -179,7 +179,14 @@ function parseScorers(json) {
       if (typeof v === 'string' && /href=/.test(v)) { const h = /href="([^"]+)"/.exec(v); if (h) o[k + '_href'] = h[1]; }
     });
     o._i = i;
-    return o;
+    // «13 Родионов Кирилл Нападающий» → номер, фамилия, имя, амплуа
+    const m = /^(\d+)?\s*(\S+)\s+(\S+)(?:\s+(Нападающий|Защитник|Вратарь))?/.exec(o.surname || o.name || '');
+    const tn = String(o.team_name || '');
+    return {
+      rank: +o.id || i + 1, num: m ? m[1] || '' : '', last: m ? m[2] : '', first: m ? m[3] : '', role: m ? m[4] || '' : '', pos: POS[(m && m[4]) || ''] || '',
+      teamId: idFromLogo(o.team_name_img) || idFromSlug(o.team_name_href), team: tn, photo: o.surname_img || '',
+      gp: o.gp || '', g: o.g || '', a: o.a || '', pts: o.pts || '', pm: o.plusminus || '', pim: o.pim || ''
+    };
   });
 }
 
