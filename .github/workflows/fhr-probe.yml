@@ -10,14 +10,16 @@ jobs:
           mkdir s && cd s
           B=https://junior.fhr.ru/tournaments/kubokrossii-25008909
           get(){ curl -sS -m 40 -A "Mozilla/5.0" -o "$1" "$2" || echo "fail $2"; }
-          get table.html $B/
-          get calendar.html $B/calendar/
-          get stats.html $B/stats/
-          get teams.html $B/teams/
-          get chess.html $B/chess/
-          get game_25170384.html https://junior.fhr.ru/games/25170384/
-          get game_26349746.html https://junior.fhr.ru/games/26349746/
-          T=$(grep -o 'href="/teams/[^"]*"' teams.html | head -1 | cut -d'"' -f2); echo "team $T"
-          [ -n "$T" ] && get team1.html "https://junior.fhr.ru$T"
+          AJ='https://junior.fhr.ru/fhr-ajax/SXRwcm9maXRcQXBwXEFqYXhcQWpheENvbXBvbmVudA==/cmVuZGVyQ29tcG9uZW50/?template=.default'
+          P_ALL='YTo0OntzOjEzOiJUT1VSTkFNRU5UX0lEIjtzOjg6IjI1MDA4OTA5IjtzOjg6IkdST1VQX0lEIjtzOjM6ImFsbCI7czo3OiJZRUFSX0lEIjtzOjg6IjI1MDA4OTUwIjtzOjc6ImlzX2FqYXgiO2I6MTt9'
+          P_BII='YTo0OntzOjEzOiJUT1VSTkFNRU5UX0lEIjtzOjg6IjI1MDA4OTA5IjtzOjg6IkdST1VQX0lEIjtzOjg6IjI2Mjg4NjY3IjtzOjc6IllFQVJfSUQiO3M6ODoiMjUwMDg5NTAiO3M6NzoiaXNfYWpheCI7YjoxO30%3D'
+          get team_dinamo.html $B/dinamo_3229852/
+          get team_lok.html "$B/$(curl -sS -A Mozilla/5.0 $B/ | grep -o 'href="/tournaments/kubokrossii-25008909/lokomotiv[^"]*"' | head -1 | sed 's#href="/tournaments/kubokrossii-25008909/##;s#"##')"
+          get aj_cal_BII.html "$AJ&component=itprofit%3Acompetitions-calendar&params=$P_BII"
+          get aj_table_BII.html "$AJ&component=itprofit%3Atournament-page&params=$P_BII"
+          get aj_teams_BII.html "$AJ&component=itprofit%3Acompetitions-teams&params=$P_BII"
+          get aj_bomb.html "$AJ&component=itprofit%3Acompetitions-stats&params=$P_ALL&stats=BOMBARDIRS"
+          curl -sS -m 40 -A "Mozilla/5.0" -H "X-Requested-With: XMLHttpRequest" -o aj_bomb_xhr.html "$AJ&component=itprofit%3Acompetitions-stats&params=$P_ALL&stats=BOMBARDIRS"
+          wc -c *
           ls -la
-          cd .. && git init -q r && cd r && git checkout -q -b fhr-samples && cp ../s/* . && git add -A && git -c user.name=bot -c user.email=bot@x commit -qm samples && git push -f -q "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" fhr-samples && echo "::notice::pushed $(ls | wc -l) files team=$T"
+          cd .. && git init -q r && cd r && git checkout -q -b fhr-samples2 && cp ../s/* . && git add -A && git -c user.name=bot -c user.email=bot@x commit -qm samples && git push -f -q "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" fhr-samples2 && echo "::notice::pushed $(ls | wc -l) files team=$T"
