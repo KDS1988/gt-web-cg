@@ -1,0 +1,32 @@
+name: fhr-sync
+# Данные турнира с junior.fhr.ru для пульта: календарь, таблицы, бомбардиры, составы, логотипы → data/fhr/
+on:
+  workflow_dispatch:
+    inputs:
+      tournament:
+        description: 'Турнир (часть адреса junior.fhr.ru/tournaments/…)'
+        default: 'kubokrossii-25008909'
+  schedule:
+    - cron: '*/15 * * * *'
+permissions:
+  contents: write
+concurrency:
+  group: fhr-sync
+  cancel-in-progress: false
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Сбор данных
+        run: node tools/fhr-sync.js "${{ github.event.inputs.tournament || 'kubokrossii-25008909' }}"
+      - name: Сохранить, если изменилось
+        run: |
+          git add data/fhr
+          if git diff --cached --quiet; then echo "без изменений"; exit 0; fi
+          git -c user.name="fhr-sync" -c user.email="fhr-sync@users.noreply.github.com" commit -qm "Данные ФХР: $(date -u +'%d.%m %H:%M') UTC"
+          git pull -q --rebase && git push -q
+          echo "::notice::данные обновлены"
