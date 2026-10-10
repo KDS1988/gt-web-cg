@@ -188,7 +188,9 @@
     var want = pkg.id + '@' + (pkg.ver || '');
     if (!force && localStorage.getItem(key) === want && bus.mode !== 'local') { pkgPill('ok', 'В КОМНАТЕ'); return Promise.resolve(); }
     pkgPill('warn', 'ПУБЛИКАЦИЯ…');
-    return bus.putPkg(pkg).then(function () {
+    var put;
+    try { put = bus.putPkg(pkg); } catch (e) { put = Promise.reject(e); }
+    return put.then(function () {
       try { localStorage.setItem(key, want); } catch (e) {}
       pkgPill('ok', 'В КОМНАТЕ');
       bus.send(buildState());

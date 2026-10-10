@@ -239,6 +239,7 @@
   };
   /** Пакет из Firebase: анимации Lottie обратно из строки */
   function unpackFb(p) {
+    if (p && p.titlesJson) { try { p.titles = JSON.parse(p.titlesJson); } catch (e) {} delete p.titlesJson; }
     if (p && p.titles) {
       if (!Array.isArray(p.titles)) p.titles = Object.keys(p.titles).sort(function (a, b) { return a - b; }).map(function (k) { return p.titles[k]; });
       p.titles.forEach(function (t) { if (t && t.animJson) { try { t.anim = JSON.parse(t.animJson); } catch (e) {} delete t.animJson; } });
@@ -250,10 +251,13 @@
     var body = JSON.stringify(pkg);
     if (this.mode === 'firebase') {
       if (!this.pkgRef) return Promise.reject(new Error('нет связи с Firebase'));
-      // Firebase хранит дерево узлов и выбрасывает пустые массивы/объекты — анимацию Lottie кладём строкой
+      // Firebase хранит дерево узлов: выбрасывает пустые массивы/объекты и не пускает точки в ключах
+      // (метаданные полей: pick.set {"Номер игрока.Text": …}) — описания титров кладём одной строкой
       var fbPkg = JSON.parse(body);
-      (fbPkg.titles || []).forEach(function (t) { if (t.anim) { t.animJson = JSON.stringify(t.anim); delete t.anim; } });
-      return this.pkgRef.set(fbPkg).then(function () { return true; });
+      fbPkg.titlesJson = JSON.stringify(fbPkg.titles || []);
+      delete fbPkg.titles;
+      try { return this.pkgRef.set(fbPkg).then(function () { return true; }); }
+      catch (e) { return Promise.reject(e); }
     }
     if (this.mode === 'server') {
       return fetch('api/pkg', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: body })
