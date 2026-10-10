@@ -1,10 +1,23 @@
 name: fhr-probe
 on: workflow_dispatch
+permissions:
+  contents: write
 jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
       - run: |
-          R=$(curl -sS -m 30 -o cal.html -w "status %{http_code} size %{size_download} time %{time_total}" -A "Mozilla/5.0" https://junior.fhr.ru/tournaments/kubokrossii-25008909/calendar/ 2>&1 || true)
-          N=$(grep -o '/games/[0-9]*' cal.html 2>/dev/null | sort -u | wc -l)
-          echo "::notice::$R games=$N"
+          mkdir s && cd s
+          B=https://junior.fhr.ru/tournaments/kubokrossii-25008909
+          get(){ curl -sS -m 40 -A "Mozilla/5.0" -o "$1" "$2" || echo "fail $2"; }
+          get table.html $B/
+          get calendar.html $B/calendar/
+          get stats.html $B/stats/
+          get teams.html $B/teams/
+          get chess.html $B/chess/
+          get game_25170384.html https://junior.fhr.ru/games/25170384/
+          get game_26349746.html https://junior.fhr.ru/games/26349746/
+          T=$(grep -o 'href="/teams/[^"]*"' teams.html | head -1 | cut -d'"' -f2); echo "team $T"
+          [ -n "$T" ] && get team1.html "https://junior.fhr.ru$T"
+          ls -la
+          cd .. && git init -q r && cd r && git checkout -q -b fhr-samples && cp ../s/* . && git add -A && git -c user.name=bot -c user.email=bot@x commit -qm samples && git push -f -q "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" fhr-samples && echo "::notice::pushed $(ls | wc -l) files team=$T"
