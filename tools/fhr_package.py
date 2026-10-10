@@ -96,31 +96,38 @@ def speed_in(d, base=15, stagger=0.4, dur=0.5):
         h['tm'] = int(math.ceil(max(ends))) + 1
 
 
-def out_order(d, F=10, overlap=3):
-    """Уход: тексты и логотипы — за F кадров от метки out, подложки — после них.
-    Слои переднего плана без своей анимации ухода (их прятала подложка-маска) — плавно гаснут."""
+def out_order(d, F=8, overlap=2, BG=14):
+    """Уход: тексты и логотипы — за F кадров от метки out, подложки — сразу следом (с нахлёстом overlap),
+    вся анимация ухода подложек сжата до BG кадров. Слои переднего плана без своей анимации ухода
+    (их прятала подложка-маска) — плавно гаснут."""
     m = marker(d, 'out')
     if not m:
         return
     mo = m['tm']
-    fg_end, bg_start = [], []
+    fg_end, bg_t = [], []
 
     def scan(l):
         ts = [kf['t'] for ks in kf_lists(l) for kf in ks if kf['t'] >= mo - 0.5]
-        if l.get('ty') == 0:
-            return
-        if is_fg(l) and not l.get('td'):
+        if is_fg(l) and not l.get('td') and l.get('ty') != 0:
             fg_end.extend(ts)
         else:
-            bg_start.extend(ts)
+            bg_t.extend(ts)
     walk_layers(d, scan)
     if not fg_end:
         return
     fe = max(fg_end)
     k = min(1.0, F / max(1e-6, fe - mo))
     g = lambda t: mo + (t - mo) * k
-    D = max(0, int(math.ceil(mo + F - overlap - min(bg_start)))) if bg_start else 0
-    op0 = d['op']
+    if bg_t:
+        b0, b1 = min(bg_t), max(bg_t)
+        kb = min(1.0, BG / max(1e-6, b1 - b0))
+        S = mo + F - overlap
+        h = lambda t: S + (max(t, b0) - b0) * kb
+        end = int(math.ceil(h(b1))) + 2
+    else:
+        h = lambda t: t
+        b1 = mo + F
+        end = mo + F + 2
 
     def fix(l):
         if is_fg(l) and not l.get('td') and l.get('ty') != 0:
@@ -138,11 +145,11 @@ def out_order(d, F=10, overlap=3):
             for ks in kf_lists(l):
                 for kf in ks:
                     if kf['t'] >= mo - 0.5:
-                        kf['t'] += D
+                        kf['t'] = h(kf['t'])
             if l['op'] > mo:
-                l['op'] += D
+                l['op'] = min(end, int(math.ceil(h(min(l['op'], b1)))) + 1) if l['op'] < d['op'] else end
     walk_layers(d, fix)
-    d['op'] = op0 + D
+    d['op'] = end
 
 
 EASE = {'i': {'x': [0.4], 'y': [1]}, 'o': {'x': [0.6], 'y': [0]}}
@@ -215,6 +222,136 @@ def gol():
     K.crop_asset_left(d, bg['refId'], 373 - K.pos(bg)[0])
     # вместо названия команды — логотип
     text_to_image(d, 'Команда доп.', 'Логотип', 72, 72, 425, 188)
+    return d
+
+
+# ---------------------------------------------------------------- картинки ассетов: обрезка по строкам
+def crop_rows(d, asset_id, y0, y1, new_id):
+    """Копия картинки ассета, где видны только строки [y0, y1) — остальное прозрачное"""
+    import io, base64
+    from PIL import Image
+    a = K.assets(d)[asset_id]
+    im = Image.open(io.BytesIO(base64.b64decode(a['p'].split(',', 1)[1]))).convert('RGBA')
+    px = im.load()
+    for y in range(im.height):
+        if y0 <= y < y1:
+            continue
+        for x in range(im.width):
+            r, g, b, al = px[x, y]
+            px[x, y] = (r, g, b, 0)
+    bio = io.BytesIO()
+    im.save(bio, 'PNG', optimize=True)
+    na = copy.deepcopy(a)
+    na['id'] = new_id
+    na['p'] = 'data:image/png;base64,' + base64.b64encode(bio.getvalue()).decode()
+    d['assets'].append(na)
+    return new_id
+
+
+# ---------------------------------------------------------------- судьи матча: нижний титр на 4 судей
+def sudi():
+    d = src('titr_igrok')
+    K.remove(d, 'Команда', 'Номер')
+    cols = [457, 792, 1127, 1462]
+    for i, x in enumerate(cols):
+        n = K.clone(d, 'Имя игрока', 'Судья %d' % (i + 1))
+        K.text(n, 'ИВАН ПЕТРОВ', size=54, j=2)
+        K.place(n, x, 893)
+        K.retime(n, i)
+        r = K.clone(d, 'Роль игрока', 'Роль судьи %d' % (i + 1))
+        K.text(r, 'ГЛАВНЫЙ СУДЬЯ' if i < 2 else 'ЛИНЕЙНЫЙ СУДЬЯ', size=34, j=2)
+        K.place(r, x, 941)
+        K.retime(r, i + 1)
+    K.remove(d, 'Имя игрока', 'Роль игрока')
+    return d
+
+
+# ---------------------------------------------------------------- звено (пятёрка): верхний титр справа от табло
+WHITE, DARK, RED = [1, 1, 1], [0.247, 0.247, 0.243], [0.855, 0.161, 0.11]
+
+
+def _kf(t0, v0, t1, v1, ease=(0.25, 0.8)):
+    n = len(v0)
+    return {'a': 1, 'k': [{'t': t0, 's': v0, 'o': {'x': [ease[0]] * n, 'y': [0] * n}, 'i': {'x': [0.2] * n, 'y': [ease[1] + 0.2] * n}},
+                          {'t': t1, 's': v1}]}
+
+
+def _keys(seq):
+    """seq — [(t, value)…] → анимированное свойство"""
+    out = []
+    for i, (t, v) in enumerate(seq):
+        k = {'t': t, 's': list(v)}
+        if i < len(seq) - 1:
+            n = len(v)
+            k['o'] = {'x': [0.3] * n, 'y': [0] * n}
+            k['i'] = {'x': [0.2] * n, 'y': [1] * n}
+        out.append(k)
+    return {'a': 1, 'k': out}
+
+
+def _ks(p, s=None, o=None):
+    return {'o': o or {'a': 0, 'k': 100}, 'r': {'a': 0, 'k': 0}, 'p': {'a': 0, 'k': [p[0], p[1], 0]},
+            'a': {'a': 0, 'k': [0, 0, 0]}, 's': s or {'a': 0, 'k': [100, 100, 100]}}
+
+
+def zveno():
+    base = src('titr_igrok')
+    IN, HOLD, OUT, END = 0, 30, 60, 80
+    d = {'v': base.get('v', '5.12.1'), 'fr': 25, 'ip': 0, 'op': END, 'w': 1920, 'h': 1080, 'nm': 'Звено', 'ddd': 0,
+         'assets': [], 'fonts': copy.deepcopy(base['fonts']), 'layers': [],
+         'markers': [{'tm': IN, 'cm': 'in', 'dr': 0}, {'tm': HOLD, 'cm': 'hold', 'dr': 0}, {'tm': OUT, 'cm': 'out', 'dr': 0}]}
+    texts, plates = [], []
+
+    def plate(name, cx, cy, w, h, color, t0, r=10):
+        L = {'ddd': 0, 'ind': 0, 'ty': 4, 'nm': name, 'sr': 1, 'ao': 0, 'ip': 0, 'op': END, 'st': 0, 'bm': 0,
+             'ks': _ks((cx, cy), s=_keys([(t0, [0, 100, 100]), (t0 + 8, [100, 100, 100]), (OUT + 6, [100, 100, 100]), (OUT + 14, [0, 100, 100])]),
+                       o=_keys([(t0, [0]), (t0 + 3, [100])])),
+             'shapes': [{'ty': 'gr', 'nm': 'rect', 'it': [
+                 {'ty': 'rc', 'd': 1, 's': {'a': 0, 'k': [w, h]}, 'p': {'a': 0, 'k': [0, 0]}, 'r': {'a': 0, 'k': r}},
+                 {'ty': 'fl', 'c': {'a': 0, 'k': color + [1]}, 'o': {'a': 0, 'k': 100}, 'r': 1, 'bm': 0},
+                 {'ty': 'tr', 'p': {'a': 0, 'k': [0, 0]}, 'a': {'a': 0, 'k': [0, 0]}, 's': {'a': 0, 'k': [100, 100]},
+                  'r': {'a': 0, 'k': 0}, 'o': {'a': 0, 'k': 100}, 'sk': {'a': 0, 'k': 0}, 'sa': {'a': 0, 'k': 0}}]}]}
+        plates.append(L)
+        return L
+
+    def text(name, t, x, y, size, font, fc, j, t0):
+        L = {'ddd': 0, 'ind': 0, 'ty': 5, 'nm': name, 'sr': 1, 'ao': 0, 'ip': 0, 'op': END, 'st': 0, 'bm': 0,
+             'ks': _ks((x, y), o=_keys([(t0, [0]), (t0 + 6, [100]), (OUT, [100]), (OUT + 6, [0])])),
+             't': {'d': {'k': [{'s': {'s': size, 'f': font, 't': t, 'ca': 0, 'j': j, 'tr': 0, 'lh': size * 1.2, 'ls': 0, 'fc': fc}, 't': 0}]},
+                   'p': {}, 'm': {'g': 1, 'a': {'a': 0, 'k': [0, 0]}}, 'a': []}}
+        # въезд снизу
+        L['ks']['p'] = _keys([(t0, [x, y + 14, 0]), (t0 + 8, [x, y, 0])])
+        texts.append(L)
+        return L
+
+    Y, H, W, GAP = 130, 92, 214, 10
+    X0 = 392
+    plate('Подложка логотипа', X0 + H / 2, Y, H, H, WHITE, 0)
+    logo = {'ddd': 0, 'ind': 0, 'ty': 2, 'nm': 'Логотип', 'refId': 'slot_logo', 'sr': 1, 'ao': 0, 'ip': 0, 'op': END, 'st': 0, 'bm': 0,
+            'ks': _ks((X0 + H / 2, Y), s=_keys([(4, [0, 0, 100]), (12, [100, 100, 100]), (OUT, [100, 100, 100]), (OUT + 6, [0, 0, 100])]))}
+    logo['ks']['a'] = {'a': 0, 'k': [38, 38, 0]}
+    d['assets'].append({'id': 'slot_logo', 'w': 76, 'h': 76, 'u': '', 'p': K.TRANSPARENT, 'e': 1})
+    texts.append(logo)
+    xs = []
+    for i in range(5):
+        x0 = X0 + H + GAP + i * (W + GAP)
+        xs.append(x0)
+        t0 = 2 + 2 * i
+        plate('Подложка %d' % (i + 1), x0 + W / 2, Y, W, H, WHITE, t0)
+        plate('Полоса %d' % (i + 1), x0 + W / 2, Y + H / 2 - 3, W - 20, 6, RED, t0 + 2, r=3)
+        text('Номер %d' % (i + 1), str([4, 12, 11, 51, 97][i]), x0 + 40, Y + 20, 58, 'BebasNeueBold', RED, 2, t0 + 6)
+        text('Имя %d' % (i + 1), ['ИВАН', 'АЛЕКСАНДР', 'ИВАН', 'ВИТАЛИЙ', 'ДАНИИЛ'][i], x0 + 80, Y - 6, 28, 'BebasNeueRegular', RED, 0, t0 + 7)
+        text('Фамилия %d' % (i + 1), ['ГРИГОРЬЕВ', 'ГАРБАР', 'САФОНОВ', 'БАЛАШОВ', 'ДОРОГИН'][i], x0 + 80, Y + 28, 40, 'BebasNeueBold', DARK, 0, t0 + 8)
+    ly = Y + H / 2 + 8 + 15
+    dl, dr = xs[0], xs[1] + W
+    fl, fr_ = xs[2], xs[4] + W
+    plate('Подложка подписи 1', (dl + dr) / 2, ly, dr - dl, 30, RED, 12, r=8)
+    plate('Подложка подписи 2', (fl + fr_) / 2, ly, fr_ - fl, 30, RED, 14, r=8)
+    text('Подпись защитники', 'ЗАЩИТНИКИ', (dl + dr) / 2, ly + 10, 28, 'BebasNeueBold', WHITE, 2, 16)
+    text('Подпись нападающие', 'НАПАДАЮЩИЕ', (fl + fr_) / 2, ly + 10, 28, 'BebasNeueBold', WHITE, 2, 18)
+    d['layers'] = texts + plates  # сверху тексты и логотип, под ними подложки
+    for i, L in enumerate(d['layers']):
+        L['ind'] = i + 1
     return d
 
 
@@ -335,6 +472,23 @@ d = src('schet_period')
 for k, dx in ((1, 32), (2, -32)):  # названия ближе к счёту — место под логотипы
     K.move(K.get(d, 'Команда %d' % k), dx, 0)
     K.move(K.get(d, 'Город %d' % k), dx, 0)
+# красная плашка: верхняя (период) и нижняя (время) — отдельными слоями, нижнюю можно прятать
+bg = K.get(d, 'BG Red')
+low = K.clone(d, 'BG Red', 'BG Red время')
+aid = bg['refId']
+low['refId'] = crop_rows(d, aid, 121, 999, aid + '_low')
+bg['refId'] = crop_rows(d, aid, 0, 121, aid + '_top')
+# копии плашки внутри масок (прекомпозиции) — так же, чтобы скрытие убирало и узор поверх неё
+for a in d['assets']:
+    L = a.get('layers')
+    if not L:
+        continue
+    for i in range(len(L) - 1, -1, -1):
+        if L[i].get('refId') == aid:
+            c = copy.deepcopy(L[i]); c['nm'] = 'BG Red время'; c['refId'] = aid + '_low'
+            c['ind'] = max(x.get('ind', 0) for x in L) + 1
+            L[i]['refId'] = aid + '_top'
+            L.insert(i, c)
 K.add_image_slot(d, 'Логотип 1', 92, 92, 372, 851, like='Счет 1')
 K.add_image_slot(d, 'Логотип 2', 92, 92, 1549, 851, like='Счет 2')
 out(nxt(), 'schet-period', d, 'Счёт периода')
@@ -375,4 +529,6 @@ out(nxt(), 'trener-hoz', igrok(True), 'Тренер · хозяева')
 out(nxt(), 'trener-gost', igrok(True), 'Тренер · гости')
 out(nxt(), 'tablica', standings(), 'Турнирная таблица')
 out(nxt(), 'bombardiry', scorers(), 'Бомбардиры')
+out(nxt(), 'zveno', zveno(), 'Звено (пятёрка)')
+out(nxt(), 'sudi', sudi(), 'Судьи матча')
 print('титров:', n, '→', OUT)

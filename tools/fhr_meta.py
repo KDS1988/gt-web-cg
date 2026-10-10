@@ -93,7 +93,11 @@ for side, n in SIDES:
     setf(t, 'Команда %d.Text' % n, bind=side + '.name', maxW=262)
     setf(t, 'Город %d.Text' % n, bind=side + '.city', maxW=262)
     setf(t, 'Логотип %d.Source' % n, bind=side + '.logo')
-setf(t, 'Период.Text', presets=['ПОСЛЕ 1 ПЕРИОДА', 'ПОСЛЕ 2 ПЕРИОДА', 'ПОСЛЕ 3 ПЕРИОДА', 'ПОСЛЕ ОВЕРТАЙМА', 'ПЕРЕД МАТЧЕМ'], maxW=190)
+setf(t, 'Период.Text', presets=['1-Й ПЕРИОД', '2-Й ПЕРИОД', '3-Й ПЕРИОД', 'ОВЕРТАЙМ', 'ПОСЛЕ 1 ПЕРИОДА', 'ПОСЛЕ 2 ПЕРИОДА',
+                                 'ПОСЛЕ 3 ПЕРИОДА', 'КОНЕЦ МАТЧА', 'ПЕРЕД МАТЧЕМ'], maxW=190)
+setf(t, 'Время.Text', timer=True, label='Время (во время периода)')
+# «после периода», «конец матча», «перед матчем» — нижняя плашка со временем не показывается
+t['hide'] = [{'layers': ['Время', 'BG Red время'], 'field': 'Период.Text', 're': '^(ПОСЛЕ|КОНЕЦ|ПЕРЕД)'}]
 t = T['10-itog-schet']
 for side, n in SIDES:
     setf(t, 'Команда %d.Text' % n, bind=side + '.name', maxW=300)
@@ -233,7 +237,28 @@ for tid in ('20-tablica', '21-bombardiry'):
         return int(m.group(1)) if m else 0
     t['fields'].sort(key=rk)
 
+# ---------------- звено: верхний титр справа от табло (данные — из заявки на матч, кнопками в пульте)
+t = T['22-zveno']
+t['ch'] = '8'
+t['feed'] = 'lines'
+setf(t, 'Логотип.Source', bind='ln.logo', label='Логотип команды')
+for n in range(1, 6):
+    sec = 'Защитник %d' % n if n <= 2 else 'Нападающий %d' % (n - 2)
+    setf(t, 'Номер %d.Text' % n, bind='ln.%d.num' % n, narrow=True, label='№', sec=sec)
+    setf(t, 'Имя %d.Text' % n, bind='ln.%d.first' % n, maxW=124, sec=sec)
+    setf(t, 'Фамилия %d.Text' % n, bind='ln.%d.last' % n, maxW=126, sec=sec)
+for f in t['fields']:
+    f.setdefault('sec', 'Подписи')
+
+# ---------------- судьи матча (из протокола)
+t = T['23-sudi']
+t['ch'] = '2'
+for n in range(1, 5):
+    setf(t, 'Судья %d.Text' % n, bind='ref.%d' % n, maxW=320)
+    setf(t, 'Роль судьи %d.Text' % n, presets=['ГЛАВНЫЙ СУДЬЯ', 'ЛИНЕЙНЫЙ СУДЬЯ'])
+
 T['02-shtorka']['ch'] = '6'
-P['features'] = {'match': 'fhr', 'channels': 7}
+setf(T['03-tablo'], 'Время.Text', clock=True)
+P['features'] = {'match': 'fhr', 'channels': 8, 'timers': 'marked'}
 json.dump(P, open(sys.argv[2], 'w', encoding='utf-8'), ensure_ascii=False, separators=(',', ':'))
 print('ok', len(P['titles']), 'титров')

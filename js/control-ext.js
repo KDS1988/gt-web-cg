@@ -42,12 +42,40 @@
   function refreshNow(slug) {
     var b = C.bus();
     if (!b || b.mode !== 'server') return Promise.reject(new Error('обновление по кнопке работает с server.js; в облаке данные обновляются автоматически каждые 15 минут'));
-    return fetch('api/fhr-sync?t=' + encodeURIComponent(slug), { method: 'POST' }).then(function (r) {
-      return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok || !j.ok) throw new Error(j.error || ('HTTP ' + r.status)); return j; });
-    }).then(function () { return loadTournament(slug); });
+    var post = function (q) {
+      return fetch('api/fhr-sync?' + q, { method: 'POST' }).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok || !j.ok) throw new Error(j.error || ('HTTP ' + r.status)); return j; });
+      });
+    };
+    var mid = $('#mMatch') && $('#mMatch').value || (C.D().match && C.D().match.id);
+    return post('t=' + encodeURIComponent(slug)).then(function () { return mid ? post('game=' + encodeURIComponent(mid)).catch(function () {}) : null; })
+      .then(function () { FHR.game = null; return loadTournament(slug); }).then(function () { return mid ? loadGame(mid) : null; });
   }
 
   function team(id) { return FHR.data && FHR.data.teams[id]; }
+  /** Заявка на матч и судьи (data/fhr/games/<id>.json — со страницы матча на сайте) */
+  function loadGame(id) {
+    if (!id) { FHR.game = null; return Promise.resolve(null); }
+    if (FHR.game && FHR.game.id === id && FHR.gameAt > Date.now() - 60000) return Promise.resolve(FHR.game);
+    return fetch('data/fhr/games/' + id + '.json', { cache: 'no-cache' }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; })
+      .then(function (g) { FHR.game = g ? Object.assign(g, { id: String(id) }) : { id: String(id), none: true, refs: { main: [], line: [] }, home: { players: [] }, away: { players: [] } }; FHR.gameAt = Date.now(); return FHR.game; });
+  }
+  function gameOf(mid) { return FHR.game && FHR.game.id === mid && !FHR.game.none ? FHR.game : null; }
+  function hasLineup(g, side) { return !!(g && g[side] && g[side].players && g[side].players.length); }
+  /** Порядок в составе: вратари (ОВ, затем ЗВ), защитники и нападающие — по звеньям, внутри — по номеру */
+  function lineupSort(list) {
+    var po = { G: 0, D: 1, F: 2 };
+    var u = function (p) { return p.pos === 'G' ? (p.unit === 'ОВ' ? 0 : 1) : (+p.unit || 9); };
+    return list.slice().sort(function (a, b) { return (po[a.pos] - po[b.pos]) || (u(a) - u(b)) || ((+a.num || 999) - (+b.num || 999)); });
+  }
+  /** Игроки стороны для титров и списков: заявка на матч, если она уже есть на сайте, иначе — состав команды */
+  function rosterOf(side, m) {
+    m = m || curMatch(); if (!m) return [];
+    var g = gameOf(m.id);
+    if (hasLineup(g, side)) return lineupSort(g[side].players);
+    var t = team(m[side] && m[side].id);
+    return (t && t.players) || [];
+  }
   function codeOf(t) {
     if (!t) return '';
     var X = cfgX().fhr.codes;
@@ -83,7 +111,9 @@
     opt = opt || {};
     var v = {}, warn = [];
     [['home', m.home], ['away', m.away]].forEach(function (x) {
-      var side = x[0], t = Object.assign({}, x[1], team(x[1].id) || {});
+      var side = x[0], t = Object.assign({}, x[1], team(x[1].id) || {}), g = gameOf(m.id);
+      t.players = rosterOf(side, m);
+      if (g && g[side] && g[side].staff && g[side].staff.length) t.staff = g[side].staff;
       v[side + '.name'] = up(t.name);
       v[side + '.city'] = up(t.city);
       v[side + '.abbr'] = (opt[side + 'Abbr'] || codeOf(t)).slice(0, 5);
@@ -102,6 +132,8 @@
         if (by[pos].length > SLOTS[pos]) warn.push(up(t.name) + ': ' + { G: 'вратарей', D: 'защитников', F: 'нападающих' }[pos] + ' ' + by[pos].length + ', в титре мест ' + SLOTS[pos]);
       });
     });
+    var gm = gameOf(m.id), refs = gm ? [gm.refs.main[0], gm.refs.main[1], gm.refs.line[0], gm.refs.line[1]] : [];
+    for (var r = 1; r <= 4; r++) v['ref.' + r] = refs[r - 1] ? personName(refs[r - 1]) : '';
     v.tournament = opt.tournament != null ? opt.tournament : tournamentShort(FHR.data);
     v.place = opt.place != null ? opt.place : up(m.arena);
     v.date = m.date; v.time = m.time; v.matchno = String(m.n || '');
@@ -138,6 +170,40 @@
       ['gp', 'g', 'a', 'pts'].forEach(function (k) { v['sc.' + r + '.' + k] = x ? x[k] : ''; });
     }
     return v;
+  }
+
+  /** Звено (пятёрка) из заявки на матч: 2 защитника и 3 нападающих звена unit */
+  function lineValues(side, unit) {
+    var m = curMatch(); if (!m) return { err: 'выберите матч' };
+    var g = gameOf(m.id); if (!hasLineup(g, side)) return { err: 'на сайте ещё нет заявки на матч со звеньями' };
+    var pl = lineupSort(g[side].players).filter(function (p) { return String(p.unit) === String(unit); });
+    var d = pl.filter(function (p) { return p.pos === 'D'; }), f = pl.filter(function (p) { return p.pos === 'F'; });
+    if (!d.length && !f.length) return { err: 'в заявке нет ' + unit + '-го звена' };
+    var five = [d[0], d[1], f[0], f[1], f[2]], v = { 'ln.logo': logoOf(team(m[side].id)) };
+    five.forEach(function (p, i) {
+      v['ln.' + (i + 1) + '.num'] = p ? p.num : '';
+      v['ln.' + (i + 1) + '.first'] = p ? up(p.first) : '';
+      v['ln.' + (i + 1) + '.last'] = p ? up(p.last) : '';
+    });
+    return { v: v, n: d.length + f.length };
+  }
+  function linesTitle() { var p = C.pkg(); return p && p.titles.filter(function (t) { return t.feed === 'lines'; })[0]; }
+  function unitsOf(side) {
+    var m = curMatch(), g = m && gameOf(m.id), u = {};
+    if (hasLineup(g, side)) g[side].players.forEach(function (p) { if (p.pos !== 'G' && /^\d+$/.test(p.unit)) u[p.unit] = 1; });
+    var l = Object.keys(u).sort(); return l.length ? l : ['1', '2', '3', '4'];
+  }
+  /** Заполнить титр звена и (take) выдать в эфир; повторное нажатие того же звена в эфире — убрать */
+  function showLine(side, unit, take) {
+    var t = linesTitle(); if (!t) return C.toast('В пакете нет титра звена', true);
+    var D = C.D(); D.feed = D.feed || {};
+    var cur = D.feed[t.id] || {}, onAir = C.airChanOf(t.id);
+    if (take && onAir && cur.side === side && String(cur.unit) === String(unit)) { C.out(onAir); return; }
+    var r = lineValues(side, unit); if (r.err) return C.toast('Звено: ' + r.err, true);
+    D.feed[t.id] = { side: side, unit: String(unit) }; C.saveData();
+    applyBinds(r.v, !!onAir);
+    if (take) C.take(t.id);
+    if (D.sel === t.id) C.renderEditor();
   }
 
   /** Записать значения по привязкам во все титры; instant — сразу в эфир */
@@ -183,8 +249,9 @@
     var M = curMatch(); if (!M || !FHR.data) return [];
     var side = key.split('.')[0], what = key.split('.')[1];
     var t = team(M[side] && M[side].id); if (!t) return [];
-    if (what === 'staff') return (t.staff || []).map(function (p) { return { label: up(p.role) + ' · ' + personName(p), p: p }; });
-    return (t.players || []).map(function (p) { return { label: (p.num ? '№' + p.num + ' ' : '') + personName(p) + ' · ' + (ROLE[p.pos] || '').toLowerCase(), p: p }; });
+    var gm = gameOf(M.id);
+    if (what === 'staff') return ((gm && gm[side] && gm[side].staff && gm[side].staff.length ? gm[side].staff : t.staff) || []).map(function (p) { return { label: up(p.role) + ' · ' + personName(p), p: p }; });
+    return rosterOf(side, M).map(function (p) { return { label: (p.num ? '№' + p.num + ' ' : '') + personName(p) + ' · ' + (ROLE[p.pos] || '').toLowerCase(), p: p }; });
   };
   H.pickFormat = function (it, fmt) {
     var p = it.p;
@@ -210,6 +277,13 @@
         return '<option value="' + esc(g.id) + '"' + (g.id === st.scope ? ' selected' : '') + '>' + esc(g.name) + (n ? '' : ' — пока пусто') + '</option>';
       }).join('') + '</select><select id="fdFrom">' + [0, 5, 10, 15].map(function (k) { return '<option value="' + k + '"' + (k === st.from ? ' selected' : '') + '>места ' + (k + 1) + '–' + (k + 5) + '</option>'; }).join('') +
         '</select><button class="btn take" data-feed="scorers">Заполнить</button>' + feedInfo() + '</div>';
+    } else if (t.feed === 'lines') {
+      var lf = (C.D().feed || {})[t.id] || { side: 'home', unit: '1' };
+      h += '<div class="feedbar"><b>🏒 Звено из заявки на матч</b>' + ['home', 'away'].map(function (sd) {
+        return '<span class="hint">' + (sd === 'home' ? 'Хозяева' : 'Гости') + '</span>' + unitsOf(sd).map(function (u) {
+          return '<button class="btn' + (lf.side === sd && lf.unit === u ? ' take' : '') + '" data-line="' + sd + ':' + u + '">' + u + '</button>';
+        }).join('');
+      }).join(' ') + '<span class="hint">кнопки в панели матча под мониторами — сразу в эфир</span></div>';
     } else if (t.statRows) {
       h += '<div class="feedbar"><b>📈 Статистика ведётся в окне</b><button class="btn take" data-open="stats">Открыть окно статистики</button></div>';
     } else if (t.side && !curMatch()) {
@@ -222,6 +296,8 @@
     return '<span class="hint">данные на ' + new Date(FHR.data.updated).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) + '</span>';
   }
   document.addEventListener('click', function (e) {
+    var ln = e.target.closest('.feedbar [data-line]');
+    if (ln && C) { var q = ln.dataset.line.split(':'); showLine(q[0], q[1], false); return; }
     var b = e.target.closest('[data-feed],[data-open]'); if (!b || !C) return;
     if (b.dataset.open === 'stats') return openStats();
     if (b.dataset.open === 'match') return openMatch();
@@ -283,22 +359,26 @@
     if (!m) { box.innerHTML = '<p class="hint">Матчи всех групп турнира. Выберите нужный — команды, логотипы, коды, арена, составы и тренеры разойдутся по всем титрам.</p>'; return; }
     var M = D.match && D.match.id === m.id ? D.match : {};
     var side = function (s) {
-      var t = Object.assign({}, m[s], team(m[s].id) || {}), cnt = { G: 0, D: 0, F: 0 };
+      var t = Object.assign({}, m[s], team(m[s].id) || {}), cnt = { G: 0, D: 0, F: 0 }, gm = gameOf(m.id), fromGame = hasLineup(gm, s);
+      t.players = rosterOf(s, m);
       (t.players || []).forEach(function (p) { if (cnt[p.pos] != null) cnt[p.pos]++; });
       var hc = headCoach(t);
       return '<div class="mteam"><img src="' + esc(logoOf(t)) + '" alt=""><div><b>' + esc(t.name) + '</b> <span class="hint">' + esc(t.city) + '</span>' +
-        '<div class="hint">состав: вратарей ' + cnt.G + ', защитников ' + cnt.D + ', нападающих ' + cnt.F + (hc ? ' · гл. тренер ' + esc(personName(hc)) : '') + '</div>' +
+        '<div class="hint">' + (fromGame ? '<b class="st-ok">заявка на матч</b>' : (gm || !FHR.game ? 'заявки на матч ещё нет — ' : '') + 'состав команды') + ': вратарей ' + cnt.G + ', защитников ' + cnt.D + ', нападающих ' + cnt.F + (hc ? ' · гл. тренер ' + esc(personName(hc)) : '') + '</div>' +
         '<label class="inl">Код для табло <input data-abbr="' + s + '" maxlength="5" value="' + esc(M[s + 'Abbr'] || codeOf(t)) + '" style="width:80px"></label></div></div>';
     };
-    var mv = matchValues(m, {});
+    if (!FHR.game || FHR.game.id !== m.id) { loadGame(m.id).then(function () { if ($('#mMatch').value === m.id) renderMatchCard(); }); }
+    var mv = matchValues(m, {}), gm = gameOf(m.id);
     box.innerHTML = '<div class="mcard">' + side('home') + '<div class="mvs">' + esc(m.score || 'VS') + '<small>' + esc(m.date + ' ' + m.time) + '<br>' + esc(m.groupName) + '</small></div>' + side('away') + '</div>' +
       '<div class="grid2"><label>Турнир (титры «Итог», «Инфографика»)<input id="mTournament" value="' + esc(M.tournament != null ? M.tournament : mv.v.tournament) + '"></label>' +
       '<label>Место (арена)<input id="mPlace" value="' + esc(M.place != null ? M.place : mv.v.place) + '"></label></div>' +
+      '<p class="hint">' + (gm && (gm.refs.main.length || gm.refs.line.length) ? 'Судьи: ' + esc(gm.refs.main.concat(gm.refs.line).map(personName).join(', ')) : 'Судьи на сайте ещё не указаны') + '</p>' +
       (mv.warn.length ? '<p class="hint st-warn">⚠ ' + mv.warn.map(esc).join('<br>⚠ ') + ' — лишние не попадут в титр состава, их можно поставить вручную.</p>' : '');
   }
   function applyMatch() {
     var id = $('#mMatch').value, m = FHR.data && FHR.data.matches.filter(function (x) { return x.id === id; })[0];
     if (!m) return C.toast('Выберите матч', true);
+    if (!FHR.game || FHR.game.id !== m.id) return loadGame(m.id).then(applyMatch);
     var D = C.D();
     var opt = { homeAbbr: $('[data-abbr=home]').value.trim(), awayAbbr: $('[data-abbr=away]').value.trim(), tournament: $('#mTournament').value.trim(), place: $('#mPlace').value.trim() };
     // коды команд запоминаем для всех будущих матчей
@@ -321,7 +401,7 @@
     var n = applyBinds(vals, true);
     $('#matchDlg').hidden = true;
     matchPill();
-    C.toast('Матч №' + m.n + ': заполнено полей — ' + n + (mv.warn.length ? ' (есть замечания по составам)' : ''));
+    C.toast('Матч №' + m.n + ': заполнено полей — ' + n + (hasLineup(gameOf(m.id), 'home') ? ' · составы из заявки на матч' : ' · заявки на матч ещё нет — составы команд') + (mv.warn.length ? ' (есть замечания по составам)' : ''));
   }
   function matchPill() {
     var p = $('#pMatch'); if (!p) return;
@@ -626,6 +706,9 @@
         '<div class="grow">' +
         '<button class="btn gbig goal" data-open="goal" data-side="' + side + '">🚨 ГОЛ</button>' +
         '<button class="btn gbig pen" data-open="pen" data-side="' + side + '">⛔ УДАЛЕНИЕ</button></div>' +
+        (linesTitle() ? '<div class="grow glines"><span class="hint">ЗВЕНО</span>' + unitsOf(side).map(function (u) {
+          return '<button class="btn gln" data-ln="' + u + '" data-side="' + side + '" title="Звено ' + u + ': заполнить и в эфир (повторно — убрать)">' + u + '</button>';
+        }).join('') + '</div>' : '') +
         '<div class="gform" data-form="goal" data-side="' + side + '" hidden>' +
         '<label>Автор гола<select data-g="author">' + plOptions(side) + '</select></label>' +
         '<div class="g2"><label>Ассистент 1<select data-g="a1">' + plOptions(side, '— нет —') + '</select></label>' +
@@ -650,6 +733,8 @@
       var g = $('[data-gstat="' + n + '"]');
       if (g) g.textContent = 'Б ' + (statVal('shots', n) || 0) + ' · СТВ ' + (statVal('sog', n) || 0) + ' · ВБР ' + (statVal('fo', n) || 0) + ' · ШТР ' + (statVal('pim', n) || 0);
     });
+    var lt = linesTitle(), lf = lt && C.airChanOf(lt.id) ? (C.D().feed || {})[lt.id] : null;
+    document.querySelectorAll('.gln').forEach(function (b) { b.classList.toggle('onair', !!(lf && lf.side === b.dataset.side && lf.unit === b.dataset.ln)); });
     var ev = C.D().events || [];
     ['home', 'away'].forEach(function (side) {
       var b = $('[data-glog="' + side + '"]'); if (!b) return;
@@ -713,7 +798,8 @@
   function gameClick(e) {
     var b = e.target.closest('button'); if (!b) return;
     var side = b.dataset.side || (b.closest('.gside') && b.closest('.gside').dataset.side);
-    if (b.dataset.ev) gameStat(b.dataset.ev, side, 1);
+    if (b.dataset.ln) showLine(side, b.dataset.ln, true);
+    else if (b.dataset.ev) gameStat(b.dataset.ev, side, 1);
     else if (b.dataset.undo) gameStat(b.dataset.undo, side, -1);
     else if (b.dataset.open) {
       var f = $('.gform[data-form=' + b.dataset.open + '][data-side=' + side + ']'), was = f.hidden;
@@ -806,6 +892,7 @@
     $('#btnMatch').hidden = false; $('#btnStats').hidden = false; $('#pMatch').hidden = false;
     var D = C.D(), slug = (D.match && D.match.slug) || 'kubokrossii-25008909';
     loadIndex().then(function (l) { if (!l.some(function (x) { return x.slug === slug; }) && l[0]) slug = l[0].slug; return loadTournament(slug); })
+      .then(function () { var M = curMatch(); return M ? loadGame(M.id) : null; })
       .then(function () { matchPill(); C.renderEditor(); }).catch(function () {});
   };
 

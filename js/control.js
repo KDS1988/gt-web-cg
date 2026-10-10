@@ -321,6 +321,12 @@
     $('#btnTake').className = 'btn ' + (c ? 'danger' : 'take');
   }
 
+  /** Кнопка «сделать таймером»: в пакетах с разметкой полей (features.timers === 'marked') — только у полей времени */
+  function timerAllowed(f) {
+    if (f.narrow) return false;
+    if (pkg && pkg.features && pkg.features.timers === 'marked') return !!(f.clock || f.penalty || f.timer);
+    return true;
+  }
   function renderEditor() {
     var E = $('#editor');
     if (!pkg) {
@@ -376,7 +382,7 @@
         body = '<div class="fr">' + (pm ? '<button class="btn pm" data-act="dec" title="−1 (сразу в эфир)">−</button>' : '') +
           '<input type="text" data-act="text" value="' + esc(sv) + '" spellcheck="false"' + (f.maxLen ? ' maxlength="' + f.maxLen + '"' : '') + '>' +
           (pm ? '<button class="btn pm" data-act="inc" title="+1 (сразу в эфир)">+</button>' : '') +
-          (f.narrow ? '' : '<button class="ibtn" data-act="timer" title="Сделать полем-таймером">⏱</button>') + '</div>';
+          (!timerAllowed(f) ? '' : '<button class="ibtn" data-act="timer" title="Сделать полем-таймером">⏱</button>') + '</div>';
       }
     } else if (f.kind === 'image') {
       var assets = assetList(), isAsset = pkg.assets && pkg.assets[v];

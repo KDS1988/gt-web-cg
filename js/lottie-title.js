@@ -304,6 +304,21 @@
         self['v:' + f.k] = on;
       }
     });
+    // правила скрытия слоёв по значению поля: def.hide = [{layers:[имя слоя…], field:'Поле.Text', re:'^ПОСЛЕ'}]
+    (this.def.hide || []).forEach(function (h, i) {
+      var val = R.textOf(self.data[h.field], now), off = false;
+      try { off = new RegExp(h.re, 'i').test(String(val)); } catch (e) {}
+      if (!force && self['h:' + i] === off) return;
+      self['h:' + i] = off;
+      (function walk(list) {
+        (list || []).forEach(function (e) {
+          if (!e || !e.data) return;
+          if (h.layers.indexOf(e.data.nm) >= 0 && e.layerElement) e.layerElement.style.display = off ? 'none' : '';
+          if (e.elements) walk(e.elements);
+        });
+      })(self.anim && self.anim.renderer && self.anim.renderer.elements);
+      any = true;
+    });
     if (any) this._force = true;
   };
 
